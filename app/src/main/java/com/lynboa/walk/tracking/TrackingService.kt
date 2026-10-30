@@ -108,7 +108,8 @@ class TrackingService : Service(), SensorEventListener {
             repo.sensorState.value = "Precise location permission required for Lyn"
             return
         }
-        repo.beginWalk()
+        if (repo.activeWalk() == null) repo.beginWalk()
+        repo.locationState.value = "Searching for GPS…"
         startGps()
     }
 
@@ -118,6 +119,7 @@ class TrackingService : Service(), SensorEventListener {
 
     private fun startGps() {
         if (gpsCallback != null || !hasLocationPermission()) return
+        repo.locationState.value = "Searching for precise GPS…"
         try {
             ServiceCompat.startForeground(this, CoachNotifications.TRACK_ID,
                 CoachNotifications.persistent(this, repo.progress.value.steps, true),
@@ -132,9 +134,16 @@ class TrackingService : Service(), SensorEventListener {
             }
             gpsCallback = callback
             location.requestLocationUpdates(request, callback, mainLooper)
+                .addOnFailureListener { e ->
+                    repo.locationState.value = "GPS request failed: " + (e.localizedMessage ?: "unavailable")
+                    gpsCallback = null
+                }
             notifyProgress()
         } catch (e: SecurityException) {
-            repo.sensorState.value = "GPS permission rejected: ${e.message}"
+            repo.locationState.value = "GPS permission rejected: " + e.message
+            gpsCallback = null
+        } catch (e: Exception) {
+            repo.locationState.value = "Could not start GPS: " + e.message
             gpsCallback = null
         }
     }
@@ -149,6 +158,7 @@ class TrackingService : Service(), SensorEventListener {
         gpsCallback?.let { location.removeLocationUpdates(it) }
         gpsCallback = null
         repo.endWalk()
+        repo.locationState.value = "Route saved · recording stopped"
         ServiceCompat.startForeground(this, CoachNotifications.TRACK_ID,
             CoachNotifications.persistent(this, repo.progress.value.steps, false),
             ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH)

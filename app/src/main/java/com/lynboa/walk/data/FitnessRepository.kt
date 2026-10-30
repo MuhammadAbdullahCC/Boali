@@ -17,6 +17,14 @@ class FitnessRepository(context: Context) {
     val walk = MutableStateFlow(db.newestWalk())
     val route = MutableStateFlow(walk.value?.let { db.points(it.id) } ?: emptyList())
     val sensorState = MutableStateFlow("Not started")
+    val liveLocation = MutableStateFlow<RoutePoint?>(null)
+    val locationState = MutableStateFlow("Location permission not requested")
+    fun showLiveLocation(p: RoutePoint) {
+        if (!p.lat.isFinite() || !p.lon.isFinite() || p.lat !in -90.0..90.0 ||
+            p.lon !in -180.0..180.0 || p.accuracy <= 0f) return
+        liveLocation.value = p
+        locationState.value = "Live position · ±" + p.accuracy.toInt() + " m"
+    }
     val offlineStatus = MutableStateFlow("Jalalpur Bhattian map: online")
     val weightKg = MutableStateFlow(prefs.getInt("weight_kg", 75))
     val strideCm = MutableStateFlow(prefs.getInt("stride_cm", 70))
@@ -43,6 +51,7 @@ class FitnessRepository(context: Context) {
     fun activeWalk(): Walk? = db.activeWalk()
 
     fun gps(point: RoutePoint) {
+        showLiveLocation(point)
         val active = db.activeWalk() ?: return
         if (db.addLocation(active.id, point) != null) refresh()
     }

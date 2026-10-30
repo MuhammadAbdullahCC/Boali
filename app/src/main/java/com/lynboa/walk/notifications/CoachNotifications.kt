@@ -38,7 +38,7 @@ object CoachNotifications {
         NotificationCompat.Builder(context, TRACK_CHANNEL)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(if (walk) "Lyn is recording your route" else "Boa is counting your steps")
-            .setContentText("${steps.toString()} steps today · ${if (walk) "GPS active" else "GPS off"}")
+            .setContentText("${steps.toString()} steps today · ${if (walk) "route recording" else "walk not recording"}")
             .setContentIntent(openApp(context))
             .setOnlyAlertOnce(true).setOngoing(true).setSilent(true)
             .setCategory(NotificationCompat.CATEGORY_SERVICE).build()

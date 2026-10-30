@@ -89,41 +89,58 @@ private fun PermissionGate(repo: FitnessRepository, startSteps: () -> Unit,
             .getDefaultSensor(Sensor.TYPE_STEP_COUNTER) != null
     }
     val stepPermission = Manifest.permission.ACTIVITY_RECOGNITION
-    val hasSteps = ContextCompat.checkSelfPermission(context, stepPermission) ==
-        PackageManager.PERMISSION_GRANTED
+    var hasSteps by remember { mutableStateOf(ContextCompat.checkSelfPermission(context, stepPermission) ==
+        PackageManager.PERMISSION_GRANTED) }
+    var hasLocation by remember { mutableStateOf(ContextCompat.checkSelfPermission(context,
+        Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) }
+    var pendingStartWalk by remember { mutableStateOf(false) }
     val locationLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()) { result ->
-        if (result[Manifest.permission.ACCESS_FINE_LOCATION] == true) startWalk()
-        else repo.sensorState.value = "Precise GPS permission needed for Lyn's route"
+        hasLocation = result[Manifest.permission.ACCESS_FINE_LOCATION] == true
+        if (hasLocation) {
+            repo.locationState.value = "Location allowed · finding you…"
+            if (pendingStartWalk) startWalk()
+        } else repo.locationState.value = "Allow precise location to show your position"
+        pendingStartWalk = false
     }
     val stepLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()) { result ->
-        if (result[stepPermission] == true) startSteps()
+        hasSteps = result[stepPermission] == true
+        if (hasSteps) startSteps()
         else repo.sensorState.value = "Allow Activity Recognition to count real steps"
     }
     DisposableEffect(lifecycle) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 repo.refresh()
-                if (ContextCompat.checkSelfPermission(context, stepPermission) ==
-                    PackageManager.PERMISSION_GRANTED && sensorAvailable) startSteps()
+                hasSteps = ContextCompat.checkSelfPermission(context, stepPermission) ==
+                    PackageManager.PERMISSION_GRANTED
+                hasLocation = ContextCompat.checkSelfPermission(context,
+                    Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+                if (hasSteps && sensorAvailable) startSteps()
             }
         }
         lifecycle.addObserver(observer)
         onDispose { lifecycle.removeObserver(observer) }
     }
-    LynBoaScreen(repo, sensorAvailable, hasSteps,
+    LynBoaScreen(repo, sensorAvailable, hasSteps, hasLocation,
+        onRequestLocation = {
+            pendingStartWalk = false
+            locationLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION,
+                Manifest.permission.ACCESS_COARSE_LOCATION))
+        },
         onEnable = {
             val permissions = mutableListOf(stepPermission)
             if (Build.VERSION.SDK_INT >= 33) permissions += Manifest.permission.POST_NOTIFICATIONS
             stepLauncher.launch(permissions.toTypedArray())
         },
         onStartWalk = {
-            if (!hasSteps) repo.sensorState.value = "Enable the step counter first"
-            else if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) ==
-                PackageManager.PERMISSION_GRANTED) startWalk()
-            else locationLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION,
-                Manifest.permission.ACCESS_COARSE_LOCATION))
+            if (hasLocation) startWalk()
+            else {
+                pendingStartWalk = true
+                locationLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.ACCESS_COARSE_LOCATION))
+            }
         },
         onStopWalk = stopWalk)
 }
