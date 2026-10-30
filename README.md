@@ -1,3 +1,12 @@
+## Latest build: Boali v0.2.1 (Redmi Note 13 Pro field-test update)
+
+- Lyn shows a purple current-location marker with recenter control and a separate Record walk action. Live preview doesn't save a route until recording starts.
+- Boa counts hardware-sensor steps independently of GPS. Notification now says "walk not recording" instead of misleading "GPS off".
+- Original 960–1024px portraits have replaced the 260px thumbnails, and the launcher icon uses a dedicated Boa portrait crop.
+- GPS preview is stopped when leaving Lyn's tab; active walks continue via the foreground service. Walking accuracy still needs validation on the actual phone.
+- Redmi HyperOS: grant physical activity, precise location while using, notifications, allow background autostart and set Battery saver to No restrictions when available.
+- To protect local history, do not uninstall without exporting/backup; GitHub debug builds are not guaranteed to share a signing key across runs.
+
 # Lyn × Boa: Walk (Android)
 
 **Status: v0.1 source-code preview; pending first APK build and on-device sensor test.**
