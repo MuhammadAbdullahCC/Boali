@@ -11,6 +11,9 @@ import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.location.Location
 import android.location.LocationManager
+import android.location.LocationListener
+import android.os.Handler
+import android.os.Looper
 import android.os.IBinder
 import android.os.SystemClock
 import androidx.core.app.ServiceCompat
@@ -46,7 +49,23 @@ class TrackingService : Service(), SensorEventListener {
     private val gpsReadings = Channel<GpsWork>(Channel.UNLIMITED)
     private var listening = false
     private var gpsCallback: LocationCallback? = null
+    private var platformGpsListener: LocationListener? = null
+    private val platformLocationManager by lazy {
+        getSystemService(LOCATION_SERVICE) as LocationManager
+    }
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private var lastReceivedElapsed = 0L
     private var lastNotificationAt = 0L
+    private val locationWatchdog = object : Runnable {
+        override fun run() {
+            if (repo.activeWalk() == null) return
+            val silence = SystemClock.elapsedRealtime() - lastReceivedElapsed
+            if (silence > 18_000L && platformGpsListener == null) {
+                startPlatformGpsFallback("Fused GPS silent for 18 seconds")
+            }
+            mainHandler.postDelayed(this, 10_000L)
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -148,10 +167,16 @@ class TrackingService : Service(), SensorEventListener {
         repo.locationState.value = "Location ON · waiting for accurate GPS fix…"
         repo.recorderState(true, "Subscribing to high accuracy GPS…")
         try {
+            // Do not request the HEALTH service type unless its permission is granted.
+            // This is important on devices where steps permission was denied.
+            val types = ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION or
+                if (ContextCompat.checkSelfPermission(this,
+                        Manifest.permission.ACTIVITY_RECOGNITION) ==
+                    PackageManager.PERMISSION_GRANTED)
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH else 0
             ServiceCompat.startForeground(this, CoachNotifications.TRACK_ID,
                 CoachNotifications.persistent(this, repo.progress.value.steps, true),
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH or
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
+                types)
             val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 3000L)
                 .setMinUpdateDistanceMeters(2f).setMinUpdateIntervalMillis(1500L).build()
             val callback = object : LocationCallback() {
@@ -160,30 +185,76 @@ class TrackingService : Service(), SensorEventListener {
                 }
             }
             gpsCallback = callback
+            lastReceivedElapsed = SystemClock.elapsedRealtime()
+            mainHandler.removeCallbacks(locationWatchdog)
+            mainHandler.postDelayed(locationWatchdog, 18_000L)
             location.requestLocationUpdates(request, callback, mainLooper)
                 .addOnSuccessListener {
                     repo.recorderState(true, "GPS updates subscribed · take a walk")
                 }
                 .addOnFailureListener { e ->
-                    repo.recorderState(false, "GPS subscription failed: " +
-                        (e.localizedMessage ?: "unknown"))
-                    repo.locationState.value = "GPS request failed: " +
-                        (e.localizedMessage ?: "unavailable")
                     gpsCallback = null
+                    startPlatformGpsFallback("Fused GPS failed: " +
+                        (e.localizedMessage ?: "unknown"))
                 }
+            // A recent fix can immediately anchor the track, before periodic updates.
+            location.lastLocation.addOnSuccessListener { previous ->
+                if (gpsCallback != null && previous != null &&
+                    System.currentTimeMillis() - previous.time in 0..15_000L) {
+                    captureLocation(previous)
+                }
+            }
             notifyProgress()
         } catch (e: SecurityException) {
             repo.recorderState(false, "GPS permission rejected")
             repo.locationState.value = "GPS permission rejected: " + e.message
             gpsCallback = null
         } catch (e: Exception) {
-            repo.recorderState(false, "Could not start GPS: " + e.message)
-            repo.locationState.value = "Could not start GPS: " + e.message
             gpsCallback = null
+            startPlatformGpsFallback("Fused location unavailable: " +
+                (e.localizedMessage ?: e.javaClass.simpleName))
         }
     }
 
+    /**
+     * Redmi/HyperOS fallback: Android's own GPS provider, independent of
+     * Google Play services. Enable it if fused updates stop or fail.
+     */
+    private fun startPlatformGpsFallback(reason: String) {
+        if (platformGpsListener != null || !hasLocationPermission()) return
+        try {
+            val provider = when {
+                platformLocationManager.isProviderEnabled(LocationManager.GPS_PROVIDER) ->
+                    LocationManager.GPS_PROVIDER
+                platformLocationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER) ->
+                    LocationManager.NETWORK_PROVIDER
+                else -> {
+                    repo.recorderState(false, "No Android location provider enabled")
+                    return
+                }
+            }
+            val fallback = LocationListener { fix -> captureLocation(fix) }
+            platformLocationManager.requestLocationUpdates(
+                provider, 2_000L, 2f, fallback, Looper.getMainLooper())
+            platformGpsListener = fallback
+            repo.recorderState(true, reason + " · Android " + provider + " active")
+        } catch (error: Exception) {
+            repo.recorderState(false, "Both GPS providers failed: " +
+                (error.localizedMessage ?: error.javaClass.simpleName))
+        }
+    }
+
+    private fun stopPlatformGps() {
+        platformGpsListener?.let {
+            platformLocationManager.removeUpdates(it)
+        }
+        platformGpsListener = null
+        mainHandler.removeCallbacks(locationWatchdog)
+    }
+
     private fun captureLocation(fix: Location) {
+        // Watchdog cares about incoming fixes, even if accuracy filtering rejects one.
+        lastReceivedElapsed = SystemClock.elapsedRealtime()
         repo.incomingGps()
         when {
             fix.isFromMockProvider -> repo.rejectedGps("Mock location ignored")
@@ -192,8 +263,8 @@ class TrackingService : Service(), SensorEventListener {
                 repo.rejectedGps("Future GPS timestamp ignored")
             System.currentTimeMillis() - fix.time > 30000L ->
                 repo.rejectedGps("Stale GPS fix ignored")
-            fix.accuracy > 35f -> repo.rejectedGps(
-                "GPS ±" + fix.accuracy.toInt() + "m · need ≤35m")
+            fix.accuracy > 45f -> repo.rejectedGps(
+                "GPS ±" + fix.accuracy.toInt() + "m · need ≤45m")
             else -> gpsReadings.trySend(GpsWork.Fix(RoutePoint(
                 fix.latitude, fix.longitude, fix.time, fix.accuracy)))
         }
@@ -202,6 +273,7 @@ class TrackingService : Service(), SensorEventListener {
     private fun stopWalk() {
         gpsCallback?.let { location.removeLocationUpdates(it) }
         gpsCallback = null
+        stopPlatformGps()
         repo.recorderState(false, "Saving final GPS points…")
         // Finish is serialized after queued position writes so route points aren't lost.
         gpsReadings.trySend(GpsWork.Finish)
@@ -225,6 +297,7 @@ class TrackingService : Service(), SensorEventListener {
     override fun onDestroy() {
         if (listening) manager.unregisterListener(this)
         gpsCallback?.let { location.removeLocationUpdates(it) }
+        stopPlatformGps()
         readings.close(); gpsReadings.close(); scope.cancel()
         repo.sensorState.value = "Tracker stopped. Open app to restart."
         if (repo.activeWalk() != null) repo.recorderState(
