@@ -23,6 +23,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.osmdroid.config.Configuration
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
+import org.osmdroid.tileprovider.modules.OfflineTileProvider
+import org.osmdroid.tileprovider.util.SimpleRegisterReceiver
 import org.osmdroid.util.BoundingBox
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
@@ -39,7 +41,8 @@ import kotlin.math.*
  */
 @Composable
 fun LynMap(points: List<RoutePoint>, live: RoutePoint?, following: Boolean,
-           recenterToken: Int, modifier: Modifier = Modifier, vectorStyle: Boolean = false) {
+           recenterToken: Int, modifier: Modifier = Modifier, vectorStyle: Boolean = false,
+           offlineArchive: String? = null) {
     if (vectorStyle) {
         LegacyLynMap(points, live, following, recenterToken, modifier, true)
         return
@@ -52,7 +55,7 @@ fun LynMap(points: List<RoutePoint>, live: RoutePoint?, following: Boolean,
     var displayedRoute by remember { mutableStateOf("") }
     var drawnRoute by remember { mutableStateOf("") }
 
-    val mapResult = remember(context) {
+    val mapResult = remember(context, offlineArchive) {
         runCatching {
             val config = Configuration.getInstance()
             config.userAgentValue = "Boali/0.7 (+https://github.com/MuhammadAbdullahCC/Boali)"
@@ -60,7 +63,16 @@ fun LynMap(points: List<RoutePoint>, live: RoutePoint?, following: Boolean,
             config.osmdroidTileCache = File(context.cacheDir, "boali-tiles").apply { mkdirs() }
             config.tileDownloadThreads = 2.toShort()
             MapView(context).apply {
-                setTileSource(TileSourceFactory.MAPNIK)
+                val offlineFile = offlineArchive?.let { File(it) }?.takeIf { it.isFile }
+                if (offlineFile != null) {
+                    setTileProvider(OfflineTileProvider(
+                        SimpleRegisterReceiver(context), arrayOf(offlineFile)))
+                    setTileSource(TileSourceFactory.MAPNIK)
+                    setUseDataConnection(false)
+                } else {
+                    setTileSource(TileSourceFactory.MAPNIK)
+                    setUseDataConnection(true)
+                }
                 setMultiTouchControls(true)
                 minZoomLevel = 3.0
                 maxZoomLevel = 19.0
@@ -95,7 +107,11 @@ fun LynMap(points: List<RoutePoint>, live: RoutePoint?, following: Boolean,
         }
     }
 
-    LaunchedEffect(map) {
+    LaunchedEffect(map, offlineArchive) {
+        if (offlineArchive != null) {
+            diagnostics = "OFFLINE · local MBTiles street map"
+            return@LaunchedEffect
+        }
         diagnostics = withContext(Dispatchers.IO) {
             try {
                 val c = live ?: points.lastOrNull()
