@@ -6,7 +6,7 @@ on:
 
 # Serial builds prevent simultaneous first-run signing-key creation.
 concurrency:
-  group: boali-android-debug-signing
+  group: boali-android-debug-signing-v2
   cancel-in-progress: false
 
 jobs:
@@ -93,6 +93,7 @@ jobs:
 
   launch-smoke-test:
     runs-on: ubuntu-latest
+    timeout-minutes: 12
     needs: apk
     permissions:
       contents: read
