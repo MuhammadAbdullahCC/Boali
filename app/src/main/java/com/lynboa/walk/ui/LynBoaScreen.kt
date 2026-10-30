@@ -31,7 +31,10 @@ import com.lynboa.walk.data.RoutePoint
 import com.lynboa.walk.domain.FitnessMath
 import com.lynboa.walk.maps.LynMap
 import com.lynboa.walk.maps.LynLocationPreview
-import com.lynboa.walk.maps.OfflineCityMap
+import com.lynboa.walk.maps.OfflineRasterMap
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.text.NumberFormat
 import java.time.LocalDate
 import java.text.SimpleDateFormat
@@ -59,18 +62,42 @@ fun LynBoaScreen(repo: FitnessRepository, sensorAvailable: Boolean, hasPermissio
     val displayRoute = if (reviewedWalk != null) reviewedRoute else route
     var allHistory by remember { mutableStateOf(false) }
     var vectorMap by remember { mutableStateOf(false) }
+    var useOfflineMap by remember { mutableStateOf(false) }
     val sensorStatus by repo.sensorState.collectAsState()
     val livePosition by repo.liveLocation.collectAsState()
     val locationStatus by repo.locationState.collectAsState()
     val gpsRecorder by repo.gpsRecorder.collectAsState()
     var recenterToken by remember { mutableIntStateOf(0) }
     val offlineStatus by repo.offlineStatus.collectAsState()
+    val offlineArchive by repo.offlineArchive.collectAsState()
     val weight by repo.weightKg.collectAsState()
     val stride by repo.strideCm.collectAsState()
     val reminders by repo.waterReminders.collectAsState()
     var lyn by remember { mutableStateOf(false) }
     val accent = if (lyn) Lilac else Pink
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val importOfflineMap = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { chosen ->
+        if (chosen != null) {
+            scope.launch {
+                repo.offlineStatus.value = "Importing offline map…"
+                val result = withContext(Dispatchers.IO) {
+                    runCatching { OfflineRasterMap.import(context, chosen) }
+                }
+                result.onSuccess { message ->
+                    repo.setImportedMap(OfflineRasterMap.archive(context).absolutePath)
+                    repo.offlineStatus.value = message
+                    useOfflineMap = true
+                    vectorMap = false
+                }.onFailure { e ->
+                    repo.offlineStatus.value = "Map import failed: " +
+                        (e.localizedMessage ?: "unknown error")
+                }
+            }
+        }
+    }
     var exportWalkId by remember { mutableStateOf<Long?>(null) }
     var exportMessage by remember { mutableStateOf<String?>(null) }
     val exportLauncher = rememberLauncherForActivityResult(
@@ -180,7 +207,9 @@ fun LynBoaScreen(repo: FitnessRepository, sensorAvailable: Boolean, hasPermissio
                         .border(1.dp, Lilac.copy(alpha = .6f), RoundedCornerShape(24.dp))) {
                         LynMap(displayRoute, if (reviewedWalk == null) livePosition else null,
                             following = recording && reviewedWalk == null,
-                            recenterToken = recenterToken, vectorStyle = vectorMap)
+                            recenterToken = recenterToken, vectorStyle = vectorMap,
+                            offlineArchive = if (useOfflineMap && !vectorMap)
+                                offlineArchive else null)
                         Box(Modifier.align(Alignment.TopStart).padding(12.dp)
                             .background(Color(0xDD27172F), RoundedCornerShape(20.dp))
                             .padding(horizontal = 13.dp, vertical = 8.dp)) {
@@ -204,12 +233,15 @@ fun LynBoaScreen(repo: FitnessRepository, sensorAvailable: Boolean, hasPermissio
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text("MAP LAYER", color = Lilac, fontWeight = FontWeight.Bold,
                                 modifier = Modifier.weight(1f))
-                            OutlinedButton(onClick = { vectorMap = !vectorMap },
+                            OutlinedButton(onClick = {
+                                vectorMap = !vectorMap
+                                if (vectorMap) useOfflineMap = false
+                            },
                                 colors = ButtonDefaults.outlinedButtonColors(contentColor = Lilac)) {
                                 Text(if (vectorMap) "Use street map" else "Try vector map")
                             }
                         }
-                        Text("The native map shows your live GPS track and keeps previously viewed streets cached. The legacy vector mode has a different offline-map store.",
+                        Text("Native streets show your actual GPS route. The legacy vector map is only an alternate renderer. Offline imported MBTiles work in native mode.",
                             color = Color.LightGray, fontSize = 11.sp)
                     }
                     GlassCard(accent) {
@@ -273,15 +305,32 @@ fun LynBoaScreen(repo: FitnessRepository, sensorAvailable: Boolean, hasPermissio
                             color = Chalk, fontSize = 12.sp)
                     }
                     GlassCard(accent) {
-                        Text("CITY MAP · OFFLINE", color = Lilac, fontWeight = FontWeight.Bold,
-                            fontSize = 13.sp)
-                        Text(offlineStatus, color = Chalk, fontSize = 12.sp)
-                        Text("Downloaded OpenFreeMap data is only readable by the LEGACY vector renderer. GPS walking routes are stored locally, even without any downloaded map.",
-                            fontSize = 12.sp, color = Color.LightGray)
-                        OutlinedButton(onClick = { OfflineCityMap.download(context, repo, livePosition) },
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Lilac)) {
-                            Text("↓ Download legacy offline area")
+                        Text("OFFLINE MAP · LYN", color = Lilac,
+                            fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        Text("Your GPS records routes without internet. For street imagery offline, " +
+                            "import a raster MBTiles file from an offline-compatible map provider.",
+                            color = Chalk, fontSize = 12.sp)
+                        Text(offlineStatus, color = Color.LightGray, fontSize = 11.sp)
+                        OutlinedButton(onClick = {
+                            importOfflineMap.launch(arrayOf("*/*"))
+                        }, colors = ButtonDefaults.outlinedButtonColors(contentColor = Lilac)) {
+                            Text("Import offline streets (.mbtiles)")
                         }
+                        if (offlineArchive != null) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("Use imported map without mobile data",
+                                    color = Chalk, fontSize = 12.sp,
+                                    modifier = Modifier.weight(1f))
+                                Switch(checked = useOfflineMap,
+                                    onCheckedChange = { enabled ->
+                                        useOfflineMap = enabled
+                                        if (enabled) vectorMap = false
+                                    })
+                            }
+                        }
+                        Text("Offline tiles must be raster PNG/JPEG MBTiles. The old " +
+                            "OpenFreeMap vector download cannot be loaded by this native renderer.",
+                            color = Color.LightGray, fontSize = 10.sp)
                     }
                     GlassCard(accent) {
                         Text("LYN'S VERDICT", color = Lilac, fontWeight = FontWeight.Bold)

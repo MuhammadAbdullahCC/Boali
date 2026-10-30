@@ -1,6 +1,7 @@
 package com.lynboa.walk.data
 
 import android.content.Context
+import java.io.File
 import com.lynboa.walk.domain.FitnessMath
 import kotlinx.coroutines.flow.MutableStateFlow
 import java.time.LocalDate
@@ -37,7 +38,15 @@ class FitnessRepository(context: Context) {
         liveLocation.value = p
         locationState.value = "Live position · ±" + p.accuracy.toInt() + " m"
     }
-    val offlineStatus = MutableStateFlow("Jalalpur Bhattian map: online")
+    val offlineStatus = MutableStateFlow("Native map: online street tiles")
+    val offlineArchive = MutableStateFlow(
+        File(context.filesDir, "boali-map/street-offline.mbtiles")
+            .takeIf { it.isFile }?.absolutePath
+    )
+    fun setImportedMap(path: String) {
+        offlineArchive.value = path
+        offlineStatus.value = "Imported offline raster map · ready to use"
+    }
     val weightKg = MutableStateFlow(prefs.getInt("weight_kg", 75))
     val strideCm = MutableStateFlow(prefs.getInt("stride_cm", 70))
     val waterReminders = MutableStateFlow(prefs.getBoolean("water_reminders", true))
