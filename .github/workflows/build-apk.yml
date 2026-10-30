@@ -48,10 +48,20 @@ jobs:
           test -n "$SDKMANAGER"
           yes | "$SDKMANAGER" --licenses > /dev/null || true
           "$SDKMANAGER" --install 'platforms;android-36' 'build-tools;36.0.0' 'platform-tools'
+      - name: Confirm cached signing key is readable
+        shell: bash
+        run: |
+          test -s "$HOME/.android/debug.keystore"
+          keytool -list -v -keystore "$HOME/.android/debug.keystore" -storepass android | grep 'SHA256:'
       - name: Unit tests
         run: gradle :app:testDebugUnitTest --no-daemon --stacktrace
       - name: Build debug APK
         run: gradle :app:assembleDebug --no-daemon --stacktrace
+      - name: Report actual APK signing certificate
+        shell: bash
+        run: |
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs \
+            app/build/outputs/apk/debug/app-debug.apk
       - name: Create stable release signing key from GitHub secrets
         if: ${{ env.KEYSTORE_B64 != '' }}
         env:

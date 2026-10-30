@@ -18,10 +18,20 @@ android {
         applicationId = "com.lynboa.walk"
         minSdk = 29
         targetSdk = 35
-        versionCode = 6
-        versionName = "0.6.0"
+        versionCode = 7
+        versionName = "0.6.1"
     }
     signingConfigs {
+        getByName("debug") {
+            // CI debug identity must be the cached key; never silently generate another.
+            val home = System.getenv("HOME")
+            if (System.getenv("GITHUB_ACTIONS") == "true" && !home.isNullOrBlank()) {
+                storeFile = file("$home/.android/debug.keystore")
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
+        }
         create("personalRelease") {
             val location = System.getenv("RELEASE_KEYSTORE_FILE")
             if (!location.isNullOrBlank()) {
@@ -33,6 +43,9 @@ android {
         }
     }
     buildTypes {
+        getByName("debug") {
+            signingConfig = signingConfigs.getByName("debug")
+        }
         release {
             isMinifyEnabled = false
             if (!System.getenv("RELEASE_KEYSTORE_FILE").isNullOrBlank()) {
