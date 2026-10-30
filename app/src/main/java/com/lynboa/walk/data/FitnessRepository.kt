@@ -72,7 +72,7 @@ class FitnessRepository(context: Context) {
 
     /** Portable GPX backup for a recorded walking session. No external account needed. */
     fun exportGpx(walkId: Long): String = buildString {
-        append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\\n")
+        append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>")
         append("<gpx version=\"1.1\" creator=\"Boali\" xmlns=\"http://www.topografix.com/GPX/1/1\"><trk><name>Boali walking route</name><trkseg>")
         db.points(walkId).forEach { fix ->
             append("<trkpt lat=\"").append(fix.lat)
