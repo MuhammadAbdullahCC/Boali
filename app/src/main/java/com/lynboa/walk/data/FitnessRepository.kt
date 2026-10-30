@@ -114,17 +114,29 @@ class FitnessRepository(context: Context) {
         } else rejectedGps("Skipped point: jump, duplicate timestamp or low accuracy")
     }
 
-    /** Portable GPX backup for a recorded walking session. No external account needed. */
+    /**
+     * Export a standards-based GPX route. Each GPS gap becomes a new track
+     * segment; navigation apps must not draw teleport lines across outages.
+     */
     fun exportGpx(walkId: Long): String = buildString {
         append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>")
-        append("<gpx version=\"1.1\" creator=\"Boali\" xmlns=\"http://www.topografix.com/GPX/1/1\"><trk><name>Boali walking route</name><trkseg>")
-        db.points(walkId).forEach { fix ->
-            append("<trkpt lat=\"").append(fix.lat)
-                .append("\" lon=\"").append(fix.lon).append("\"><time>")
-                .append(java.time.Instant.ofEpochMilli(fix.at))
+        append("<gpx version=\"1.1\" creator=\"Boali\" ")
+        append("xmlns=\"http://www.topografix.com/GPX/1/1\">")
+        append("<trk><name>Boali walking route</name>")
+        var segmentOpen = false
+        db.points(walkId).forEach { point ->
+            if (!segmentOpen || point.breakBefore) {
+                if (segmentOpen) append("</trkseg>")
+                append("<trkseg>")
+                segmentOpen = true
+            }
+            append("<trkpt lat=\"").append(point.lat)
+                .append("\" lon=\"").append(point.lon).append("\"><time>")
+                .append(java.time.Instant.ofEpochMilli(point.at))
                 .append("</time></trkpt>")
         }
-        append("</trkseg></trk></gpx>")
+        if (segmentOpen) append("</trkseg>")
+        append("</trk></gpx>")
     }
 
     fun setWeight(kg: Int) {
