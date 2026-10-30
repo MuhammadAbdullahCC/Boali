@@ -5,6 +5,14 @@ import com.lynboa.walk.domain.FitnessMath
 import kotlinx.coroutines.flow.MutableStateFlow
 import java.time.LocalDate
 
+data class GpsRecorderStatus(
+    val serviceActive: Boolean = false,
+    val received: Int = 0,
+    val saved: Int = 0,
+    val skipped: Int = 0,
+    val reason: String = "GPS recorder not started"
+)
+
 class FitnessRepository(context: Context) {
     private val db = FitnessDatabase(context.applicationContext)
     private val prefs = context.getSharedPreferences("lynboa_settings", Context.MODE_PRIVATE)
@@ -22,6 +30,7 @@ class FitnessRepository(context: Context) {
     val sensorState = MutableStateFlow("Not started")
     val liveLocation = MutableStateFlow<RoutePoint?>(null)
     val locationState = MutableStateFlow("Location permission not requested")
+    val gpsRecorder = MutableStateFlow(GpsRecorderStatus())
     fun showLiveLocation(p: RoutePoint) {
         if (!p.lat.isFinite() || !p.lon.isFinite() || p.lat !in -90.0..90.0 ||
             p.lon !in -180.0..180.0 || p.accuracy <= 0f) return
@@ -60,14 +69,40 @@ class FitnessRepository(context: Context) {
     }
 
     fun water(ml: Int) { progress.value = db.addWater(todayKey(), ml) }
-    fun beginWalk() { db.newWalk(System.currentTimeMillis()); refresh() }
-    fun endWalk() { db.finishWalk(System.currentTimeMillis()); refresh() }
+    @Synchronized fun beginWalk() {
+        db.newWalk(System.currentTimeMillis())
+        gpsRecorder.value = GpsRecorderStatus(reason = "Starting location recorder…")
+        refresh()
+    }
+    @Synchronized fun endWalk() {
+        db.finishWalk(System.currentTimeMillis())
+        gpsRecorder.value = gpsRecorder.value.copy(
+            serviceActive = false, reason = "GPS recording finished · saved locally")
+        refresh()
+    }
+    @Synchronized fun recorderState(active: Boolean, message: String) {
+        gpsRecorder.value = gpsRecorder.value.copy(serviceActive = active, reason = message)
+    }
+    @Synchronized fun incomingGps() {
+        gpsRecorder.value = gpsRecorder.value.copy(received = gpsRecorder.value.received + 1)
+    }
+    @Synchronized fun rejectedGps(reason: String) {
+        gpsRecorder.value = gpsRecorder.value.copy(
+            skipped = gpsRecorder.value.skipped + 1, reason = reason)
+    }
     fun activeWalk(): Walk? = db.activeWalk()
 
-    fun gps(point: RoutePoint) {
+    @Synchronized fun gps(point: RoutePoint) {
         showLiveLocation(point)
         val active = db.activeWalk() ?: return
-        if (db.addLocation(active.id, point) != null) refresh()
+        val segment = db.addLocation(active.id, point)
+        if (segment != null) {
+            gpsRecorder.value = gpsRecorder.value.copy(
+                serviceActive = true, saved = gpsRecorder.value.saved + 1,
+                reason = if (segment > 0.0) "GPS movement saved"
+                         else "GPS position saved · move to draw a route")
+            refresh()
+        } else rejectedGps("Skipped point: jump, duplicate timestamp or low accuracy")
     }
 
     /** Portable GPX backup for a recorded walking session. No external account needed. */
