@@ -50,6 +50,7 @@ fun LynMap(points: List<RoutePoint>, live: RoutePoint?, following: Boolean,
     var centerAt by remember { mutableLongStateOf(-1L) }
     var centerToken by remember { mutableIntStateOf(-1) }
     var displayedRoute by remember { mutableStateOf("") }
+    var drawnRoute by remember { mutableStateOf("") }
 
     val mapResult = remember(context) {
         runCatching {
@@ -77,20 +78,9 @@ fun LynMap(points: List<RoutePoint>, live: RoutePoint?, following: Boolean,
         return
     }
     val map = mapResult.getOrThrow()
-    val outer = remember(map) {
-        Polyline(map).apply {
-            outlinePaint.color = Color.rgb(87, 30, 129)
-            outlinePaint.strokeWidth = 15f
-            map.overlays.add(this)
-        }
-    }
-    val route = remember(map) {
-        Polyline(map).apply {
-            outlinePaint.color = Color.rgb(226, 139, 251)
-            outlinePaint.strokeWidth = 7f
-            map.overlays.add(this)
-        }
-    }
+    // Rebuild only the route overlays when the saved GPS points change.
+    // Breaks do NOT connect across long GPS outages.
+    val routeOverlays = remember(map) { mutableListOf<Polyline>() }
     val position = remember(map) {
         Marker(map).apply {
             setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
@@ -161,22 +151,55 @@ fun LynMap(points: List<RoutePoint>, live: RoutePoint?, following: Boolean,
     Box(modifier.fillMaxSize()) {
         AndroidView(factory = { map }, modifier = Modifier.fillMaxSize(), update = { view ->
             val path = points.map { GeoPoint(it.lat, it.lon) }
-            outer.setPoints(path)
-            route.setPoints(path)
+            val routeId = (points.firstOrNull()?.at ?: 0L).toString() + ":" +
+                (points.lastOrNull()?.at ?: 0L) + ":" + points.size
+            if (routeId != drawnRoute) {
+                drawnRoute = routeId
+                routeOverlays.forEach { view.overlays.remove(it) }
+                routeOverlays.clear()
+                val segments = mutableListOf<MutableList<GeoPoint>>()
+                points.forEach { point ->
+                    if (segments.isEmpty() || point.breakBefore) {
+                        segments.add(mutableListOf())
+                    }
+                    segments.last().add(GeoPoint(point.lat, point.lon))
+                }
+                segments.filter { it.size >= 2 }.forEach { segment ->
+                    val halo = Polyline(view).apply {
+                        outlinePaint.color = Color.rgb(67, 20, 107)
+                        outlinePaint.strokeWidth = 17f
+                        setPoints(segment)
+                    }
+                    val trail = Polyline(view).apply {
+                        outlinePaint.color = Color.rgb(233, 133, 255)
+                        outlinePaint.strokeWidth = 8f
+                        setPoints(segment)
+                    }
+                    // Insert behind the current-position dot.
+                    view.overlays.add(0, halo)
+                    view.overlays.add(1, trail)
+                    routeOverlays.add(halo)
+                    routeOverlays.add(trail)
+                }
+            }
             position.isEnabled = live != null
             if (live != null) position.position = GeoPoint(live.lat, live.lon)
 
-            val key = (points.firstOrNull()?.at ?: 0L).toString() + ":" +
-                (points.lastOrNull()?.at ?: 0L) + ":" + points.size
-            if (!following && path.size >= 2 && displayedRoute != key) {
-                displayedRoute = key
+            if (!following && path.isNotEmpty() && displayedRoute != routeId) {
+                displayedRoute = routeId
                 view.post {
                     if (view.width > 0 && view.height > 0) {
-                        val box = BoundingBox(path.maxOf { it.latitude },
-                            path.maxOf { it.longitude },
-                            path.minOf { it.latitude },
-                            path.minOf { it.longitude })
-                        view.zoomToBoundingBox(box, true, 65)
+                        val north = path.maxOf { it.latitude }
+                        val south = path.minOf { it.latitude }
+                        val east = path.maxOf { it.longitude }
+                        val west = path.minOf { it.longitude }
+                        if (north - south < .00002 && east - west < .00002) {
+                            view.controller.setCenter(path.last())
+                            view.controller.setZoom(17.0)
+                        } else {
+                            view.zoomToBoundingBox(
+                                BoundingBox(north, east, south, west), true, 65)
+                        }
                     }
                 }
             } else if (live != null &&
