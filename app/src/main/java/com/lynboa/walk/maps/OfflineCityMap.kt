@@ -2,6 +2,8 @@ package com.lynboa.walk.maps
 
 import android.content.Context
 import com.lynboa.walk.data.FitnessRepository
+import com.lynboa.walk.data.RoutePoint
+import kotlin.math.roundToInt
 import org.maplibre.android.geometry.LatLng
 import org.maplibre.android.geometry.LatLngBounds
 import org.maplibre.android.offline.OfflineManager
@@ -12,7 +14,11 @@ import org.maplibre.android.offline.OfflineTilePyramidRegionDefinition
 
 /** One modest city download. Map data © OpenStreetMap contributors. */
 object OfflineCityMap {
-    fun download(context: Context, repository: FitnessRepository) {
+    fun download(context: Context, repository: FitnessRepository, center: RoutePoint? = null) {
+        val lat = center?.lat ?: MapConfig.CITY_LAT
+        val lon = center?.lon ?: MapConfig.CITY_LON
+        val regionName = "boali-local-v2-" + (lat * 100).roundToInt() +
+            "-" + (lon * 100).roundToInt()
         val manager = try {
             MapRuntime.ensure(context)
             OfflineManager.getInstance(context)
@@ -24,7 +30,7 @@ object OfflineCityMap {
         manager.listOfflineRegions(object : OfflineManager.ListOfflineRegionsCallback {
             override fun onList(offlineRegions: Array<OfflineRegion>?) {
                 val existing = offlineRegions?.firstOrNull {
-                    String(it.metadata, Charsets.UTF_8) == "lynboa-jalalpur-v1"
+                    String(it.metadata, Charsets.UTF_8) == regionName
                 }
                 if (existing != null) {
                     existing.getStatus(object : OfflineRegion.OfflineRegionStatusCallback {
@@ -37,7 +43,7 @@ object OfflineCityMap {
                             repository.offlineStatus.value = "Map status error: $error"
                         }
                     })
-                } else create(manager, repository)
+                } else create(manager, repository, lat, lon, regionName)
             }
             override fun onError(error: String) {
                 repository.offlineStatus.value = "Offline map lookup failed: $error"
@@ -45,14 +51,16 @@ object OfflineCityMap {
         })
     }
 
-    private fun create(manager: OfflineManager, repo: FitnessRepository) {
-        // ~8 km × 6 km, zoom 12..15. Offline map tile quota: <=3000 tiles / <=50 MB.
+    private fun create(manager: OfflineManager, repo: FitnessRepository,
+                       lat: Double, lon: Double, regionName: String) {
+        // About 5 km around the chosen GPS fix, zoom 12..16, below provider caps.
         val bounds = LatLngBounds.Builder()
-            .include(LatLng(32.035, 73.335))
-            .include(LatLng(32.090, 73.420)).build()
+            .include(LatLng((lat - .022).coerceAtLeast(-85.0), (lon - .030).coerceAtLeast(-180.0)))
+            .include(LatLng((lat + .022).coerceAtMost(85.0), (lon + .030).coerceAtMost(180.0)))
+            .build()
         val definition = OfflineTilePyramidRegionDefinition(MapConfig.STYLE,
-            bounds, 12.0, 15.0, 1f)
-        manager.createOfflineRegion(definition, "lynboa-jalalpur-v1".toByteArray(),
+            bounds, 12.0, 16.0, 1f)
+        manager.createOfflineRegion(definition, regionName.toByteArray(),
             object : OfflineManager.CreateOfflineRegionCallback {
                 override fun onCreate(offlineRegion: OfflineRegion) {
                     watch(offlineRegion, repo)

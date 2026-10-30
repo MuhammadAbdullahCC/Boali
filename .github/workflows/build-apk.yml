@@ -4,6 +4,11 @@ on:
     branches: [main, master]
   workflow_dispatch:
 
+# Serial builds prevent simultaneous first-run signing-key creation.
+concurrency:
+  group: boali-android-debug-signing
+  cancel-in-progress: false
+
 jobs:
   apk:
     runs-on: ubuntu-latest
@@ -18,6 +23,23 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.13'
+      # Debug APKs need a stable certificate or Android rejects future updates.
+      # This is a CI-only debug key, NOT a production release signing key.
+      - name: Restore persistent debug signing key
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: boali-personal-debug-signer-v1
+      - name: Create debug signing key if missing
+        shell: bash
+        run: |
+          mkdir -p "$HOME/.android"
+          if [ ! -s "$HOME/.android/debug.keystore" ]; then
+            keytool -genkeypair -noprompt -keystore "$HOME/.android/debug.keystore" \
+              -alias androiddebugkey -storepass android -keypass android \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+          fi
       - name: Install Android SDK directly
         shell: bash
         run: |

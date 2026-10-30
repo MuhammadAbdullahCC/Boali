@@ -70,6 +70,19 @@ class FitnessRepository(context: Context) {
         if (db.addLocation(active.id, point) != null) refresh()
     }
 
+    /** Portable GPX backup for a recorded walking session. No external account needed. */
+    fun exportGpx(walkId: Long): String = buildString {
+        append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\\n")
+        append("<gpx version=\"1.1\" creator=\"Boali\" xmlns=\"http://www.topografix.com/GPX/1/1\"><trk><name>Boali walking route</name><trkseg>")
+        db.points(walkId).forEach { fix ->
+            append("<trkpt lat=\"").append(fix.lat)
+                .append("\" lon=\"").append(fix.lon).append("\"><time>")
+                .append(java.time.Instant.ofEpochMilli(fix.at))
+                .append("</time></trkpt>")
+        }
+        append("</trkseg></trk></gpx>")
+    }
+
     fun setWeight(kg: Int) {
         weightKg.value = kg.coerceIn(30, 250)
         prefs.edit().putInt("weight_kg", weightKg.value).apply()

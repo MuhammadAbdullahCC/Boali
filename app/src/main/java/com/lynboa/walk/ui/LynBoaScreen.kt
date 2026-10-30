@@ -1,5 +1,7 @@
 package com.lynboa.walk.ui
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -68,6 +70,22 @@ fun LynBoaScreen(repo: FitnessRepository, sensorAvailable: Boolean, hasPermissio
     var lyn by remember { mutableStateOf(false) }
     val accent = if (lyn) Lilac else Pink
     val context = LocalContext.current
+    var exportWalkId by remember { mutableStateOf<Long?>(null) }
+    var exportMessage by remember { mutableStateOf<String?>(null) }
+    val exportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/gpx+xml")
+    ) { uri ->
+        val walkId = exportWalkId
+        if (uri != null && walkId != null) {
+            runCatching {
+                context.contentResolver.openOutputStream(uri)?.bufferedWriter()?.use { writer ->
+                    writer.write(repo.exportGpx(walkId))
+                } ?: error("Could not write the selected file")
+            }.onSuccess { exportMessage = "GPX route exported successfully." }
+                .onFailure { exportMessage = "GPX export failed: " + it.localizedMessage }
+        }
+        exportWalkId = null
+    }
     val locationManager = remember(context) { context.getSystemService(android.content.Context.LOCATION_SERVICE) as android.location.LocationManager }
     val gpsEnabled = locationManager.isLocationEnabled
     val recording = walk != null && walk!!.endedAt == null
@@ -198,7 +216,7 @@ fun LynBoaScreen(repo: FitnessRepository, sensorAvailable: Boolean, hasPermissio
                                 color = Chalk, fontSize = 12.sp)
                         } else {
                             val format = remember { SimpleDateFormat("EEE, dd MMM yyyy · h:mm a", Locale.getDefault()) }
-                            history.take(if (allHistory) 100 else 7).forEach { saved ->
+                            history.take(if (allHistory) history.size else 7).forEach { saved ->
                                 Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
                                     .background(if (reviewedWalk?.id == saved.id)
                                         Lilac.copy(alpha = .19f) else Color.White.copy(alpha = .06f))
@@ -219,6 +237,19 @@ fun LynBoaScreen(repo: FitnessRepository, sensorAvailable: Boolean, hasPermissio
                                         color = Lilac, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                                 }
                             }
+                            if (displayWalk != null && displayRoute.isNotEmpty()) {
+                                OutlinedButton(onClick = {
+                                    exportWalkId = displayWalk.id
+                                    val filename = SimpleDateFormat("yyyy-MM-dd_HH-mm", Locale.US)
+                                        .format(Date(displayWalk.startedAt))
+                                    exportLauncher.launch("Boali-" + filename + ".gpx")
+                                }, colors = ButtonDefaults.outlinedButtonColors(contentColor = Lilac)) {
+                                    Text("Export selected route as GPX")
+                                }
+                            }
+                            exportMessage?.let {
+                                Text(it, color = Lilac, fontSize = 11.sp)
+                            }
                             if (history.size > 7) TextButton(onClick = { allHistory = !allHistory }) {
                                 Text(if (allHistory) "Show recent" else "Show all saved walks",
                                     color = Lilac)
@@ -234,11 +265,11 @@ fun LynBoaScreen(repo: FitnessRepository, sensorAvailable: Boolean, hasPermissio
                         Text("CITY MAP · OFFLINE", color = Lilac, fontWeight = FontWeight.Bold,
                             fontSize = 13.sp)
                         Text(offlineStatus, color = Chalk, fontSize = 12.sp)
-                        Text("Save city streets for use without mobile data. Download once over Wi-Fi.",
+                        Text("Save map tiles around your current GPS location (or Jalalpur by default) over Wi-Fi. Switch to vector mode to use the saved area offline.",
                             fontSize = 12.sp, color = Color.LightGray)
-                        OutlinedButton(onClick = { OfflineCityMap.download(context, repo) },
+                        OutlinedButton(onClick = { OfflineCityMap.download(context, repo, livePosition) },
                             colors = ButtonDefaults.outlinedButtonColors(contentColor = Lilac)) {
-                            Text("↓ Download Jalalpur map")
+                            Text("↓ Download map near me")
                         }
                     }
                     GlassCard(accent) {
