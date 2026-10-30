@@ -69,7 +69,7 @@ class FitnessDatabase(context: Context) : SQLiteOpenHelper(context, "lynboa.db",
             }
             db.insertWithOnConflict("daily", null, values, SQLiteDatabase.CONFLICT_IGNORE)
             db.execSQL("UPDATE daily SET steps=?, milestones=? WHERE day=?",
-                arrayOf(newSteps, mask, date))
+                arrayOf<Any>(newSteps, mask, date))
             val checkpoint = ContentValues().apply {
                 put("id", 1); put("raw", raw); put("elapsed_nanos", elapsedNanos)
             }
@@ -83,7 +83,7 @@ class FitnessDatabase(context: Context) : SQLiteOpenHelper(context, "lynboa.db",
         val values = ContentValues().apply { put("day", date) }
         writableDatabase.insertWithOnConflict("daily", null, values, SQLiteDatabase.CONFLICT_IGNORE)
         writableDatabase.execSQL("UPDATE daily SET water_ml = MAX(0, water_ml + ?) WHERE day=?",
-            arrayOf(ml, date))
+            arrayOf<Any>(ml, date))
         return day(date)
     }
 
@@ -149,7 +149,7 @@ class FitnessDatabase(context: Context) : SQLiteOpenHelper(context, "lynboa.db",
             }
             db.insertOrThrow("points", null, values)
             db.execSQL("UPDATE walks SET distance_m = distance_m + ? WHERE id=?",
-                arrayOf(meters, walkId))
+                arrayOf<Any>(meters, walkId))
             db.setTransactionSuccessful()
             return meters
         } finally { db.endTransaction() }
