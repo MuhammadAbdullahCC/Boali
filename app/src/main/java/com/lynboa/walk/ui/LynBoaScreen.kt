@@ -61,7 +61,7 @@ fun LynBoaScreen(repo: FitnessRepository, sensorAvailable: Boolean, hasPermissio
     val locationManager = remember(context) { context.getSystemService(android.content.Context.LOCATION_SERVICE) as android.location.LocationManager }
     val gpsEnabled = locationManager.isLocationEnabled
     val recording = walk != null && walk!!.endedAt == null
-    val hasFix = livePosition != null && System.currentTimeMillis() - livePosition!!.timestamp < 45_000L
+    val hasFix = livePosition != null && System.currentTimeMillis() - livePosition!!.at < 45_000L
     val goal = repo.goal()
     val percent = (progress.steps.toFloat() / goal.coerceAtLeast(1)).coerceIn(0f, 1f)
 
