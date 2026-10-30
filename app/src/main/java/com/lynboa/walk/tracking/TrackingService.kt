@@ -29,8 +29,13 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** Always-on low-power step counter, plus GPS ONLY during an explicitly started walk. */
+private sealed interface GpsWork {
+    data class Fix(val location: RoutePoint) : GpsWork
+    data object Finish : GpsWork
+}
 class TrackingService : Service(), SensorEventListener {
     private val app get() = application as WalkApp
     private val repo get() = app.repository
@@ -38,7 +43,7 @@ class TrackingService : Service(), SensorEventListener {
     private val location by lazy { LocationServices.getFusedLocationProviderClient(this) }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val readings = Channel<Pair<Long, Long>>(Channel.UNLIMITED)
-    private val gpsReadings = Channel<RoutePoint>(Channel.UNLIMITED)
+    private val gpsReadings = Channel<GpsWork>(Channel.UNLIMITED)
     private var listening = false
     private var gpsCallback: LocationCallback? = null
     private var lastNotificationAt = 0L
@@ -46,7 +51,16 @@ class TrackingService : Service(), SensorEventListener {
     override fun onCreate() {
         super.onCreate()
         scope.launch {
-            for (fix in gpsReadings) repo.gps(fix)
+            for (work in gpsReadings) {
+                when (work) {
+                    is GpsWork.Fix -> repo.gps(work.location)
+                    GpsWork.Finish -> {
+                        repo.endWalk()
+                        repo.locationState.value = "Walk route saved · recording stopped"
+                        if (!listening) withContext(Dispatchers.Main) { stopSelf() }
+                    }
+                }
+            }
         }
         scope.launch {
             for ((raw, nanos) in readings) {
@@ -180,20 +194,20 @@ class TrackingService : Service(), SensorEventListener {
                 repo.rejectedGps("Stale GPS fix ignored")
             fix.accuracy > 35f -> repo.rejectedGps(
                 "GPS ±" + fix.accuracy.toInt() + "m · need ≤35m")
-            else -> gpsReadings.trySend(RoutePoint(
-                fix.latitude, fix.longitude, fix.time, fix.accuracy))
+            else -> gpsReadings.trySend(GpsWork.Fix(RoutePoint(
+                fix.latitude, fix.longitude, fix.time, fix.accuracy)))
         }
     }
 
     private fun stopWalk() {
         gpsCallback?.let { location.removeLocationUpdates(it) }
         gpsCallback = null
-        repo.endWalk()
-        repo.locationState.value = "Route saved · recording stopped"
+        repo.recorderState(false, "Saving final GPS points…")
+        // Finish is serialized after queued position writes so route points aren't lost.
+        gpsReadings.trySend(GpsWork.Finish)
         if (listening) ServiceCompat.startForeground(this, CoachNotifications.TRACK_ID,
             CoachNotifications.persistent(this, repo.progress.value.steps, false),
             ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH)
-        else stopSelf()
     }
 
     private fun notifyProgress() {
