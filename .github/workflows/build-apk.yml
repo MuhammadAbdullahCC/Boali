@@ -6,7 +6,7 @@ on:
 
 # Serial builds prevent simultaneous first-run signing-key creation.
 concurrency:
-  group: boali-android-debug-signing-v2
+  group: boali-android-debug-signing-v3
   cancel-in-progress: false
 
 jobs:
@@ -62,6 +62,14 @@ jobs:
         run: |
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs \
             app/build/outputs/apk/debug/app-debug.apk
+      - name: Build Android on-device route integration tests
+        run: gradle :app:assembleDebugAndroidTest --no-daemon --stacktrace
+      - name: Upload on-device route tests
+        uses: actions/upload-artifact@v4
+        with:
+          name: Boali-android-route-tests
+          path: app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+          if-no-files-found: error
       - name: Create stable release signing key from GitHub secrets
         if: ${{ env.KEYSTORE_B64 != '' }}
         env:
@@ -103,6 +111,10 @@ jobs:
         with:
           name: LynBoaWalk-debug-apk
           path: ./built-apk
+      - uses: actions/download-artifact@v4
+        with:
+          name: Boali-android-route-tests
+          path: ./route-tests
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -114,4 +126,9 @@ jobs:
           api-level: 35
           target: google_apis
           arch: x86_64
-          script: bash ci/smoke-test.sh
+          script: |
+            bash ci/smoke-test.sh
+            adb shell am force-stop com.lynboa.walk
+            adb install -r ./route-tests/app-debug-androidTest.apk
+            adb shell am instrument -w com.lynboa.walk.test/androidx.test.runner.AndroidJUnitRunner | tee /tmp/boali-gps-tests.log
+            grep -q 'OK (1 test)' /tmp/boali-gps-tests.log
