@@ -69,16 +69,20 @@ class TrackingService : Service(), SensorEventListener {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACTIVITY_RECOGNITION)
-            != PackageManager.PERMISSION_GRANTED) {
-            repo.sensorState.value = "Activity permission required"
-            stopSelf(); return START_NOT_STICKY
-        }
-        startSteps()
+        val stepsGranted = ContextCompat.checkSelfPermission(
+            this, Manifest.permission.ACTIVITY_RECOGNITION) == PackageManager.PERMISSION_GRANTED
         when (intent?.action) {
-            ACTION_START_WALK -> startWalk()
+            ACTION_START_WALK -> {
+                startWalk()
+                if (stepsGranted) startSteps()
+            }
             ACTION_STOP_WALK -> stopWalk()
-            else -> if (repo.activeWalk() != null && hasLocationPermission()) startGps()
+            else -> {
+                if (stepsGranted) startSteps()
+                else repo.sensorState.value = "Activity Recognition needed for steps"
+                if (repo.activeWalk() != null && hasLocationPermission()) startGps()
+                else if (!stepsGranted) stopSelf()
+            }
         }
         return START_STICKY
     }
@@ -87,7 +91,7 @@ class TrackingService : Service(), SensorEventListener {
         val sensor = manager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER)
         if (sensor == null) {
             repo.sensorState.value = "No hardware step counter on this device"
-            stopSelf(); return
+            return
         }
         val notification = CoachNotifications.persistent(this, repo.progress.value.steps,
             repo.activeWalk() != null)
@@ -99,7 +103,7 @@ class TrackingService : Service(), SensorEventListener {
                 else ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH)
         } catch (error: Exception) {
             repo.sensorState.value = "Tracking could not start: ${error.message}"
-            stopSelf(); return
+            return
         }
         if (!listening) {
             listening = manager.registerListener(this, sensor, SensorManager.SENSOR_DELAY_NORMAL)
@@ -128,13 +132,14 @@ class TrackingService : Service(), SensorEventListener {
             return
         }
         repo.locationState.value = "Location ON · waiting for accurate GPS fix…"
+        repo.recorderState(true, "Subscribing to high accuracy GPS…")
         try {
             ServiceCompat.startForeground(this, CoachNotifications.TRACK_ID,
                 CoachNotifications.persistent(this, repo.progress.value.steps, true),
                 ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH or
                     ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
-            val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 5000L)
-                .setMinUpdateDistanceMeters(5f).setMinUpdateIntervalMillis(2500L).build()
+            val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 3000L)
+                .setMinUpdateDistanceMeters(2f).setMinUpdateIntervalMillis(1500L).build()
             val callback = object : LocationCallback() {
                 override fun onLocationResult(result: LocationResult) {
                     result.locations.forEach(::captureLocation)
@@ -142,28 +147,41 @@ class TrackingService : Service(), SensorEventListener {
             }
             gpsCallback = callback
             location.requestLocationUpdates(request, callback, mainLooper)
+                .addOnSuccessListener {
+                    repo.recorderState(true, "GPS updates subscribed · take a walk")
+                }
                 .addOnFailureListener { e ->
-                    repo.locationState.value = "GPS request failed: " + (e.localizedMessage ?: "unavailable")
+                    repo.recorderState(false, "GPS subscription failed: " +
+                        (e.localizedMessage ?: "unknown"))
+                    repo.locationState.value = "GPS request failed: " +
+                        (e.localizedMessage ?: "unavailable")
                     gpsCallback = null
                 }
             notifyProgress()
         } catch (e: SecurityException) {
+            repo.recorderState(false, "GPS permission rejected")
             repo.locationState.value = "GPS permission rejected: " + e.message
             gpsCallback = null
         } catch (e: Exception) {
+            repo.recorderState(false, "Could not start GPS: " + e.message)
             repo.locationState.value = "Could not start GPS: " + e.message
             gpsCallback = null
         }
     }
 
     private fun captureLocation(fix: Location) {
-        if (fix.isFromMockProvider || !fix.hasAccuracy()) return
-        if (fix.time > System.currentTimeMillis() + 10000L) return
-        if (fix.accuracy <= 35f) {
-            gpsReadings.trySend(RoutePoint(fix.latitude, fix.longitude, fix.time, fix.accuracy))
-        } else {
-            repo.locationState.value = "GPS accuracy ±" + fix.accuracy.toInt() +
-                " m, waiting for ≤35 m to record"
+        repo.incomingGps()
+        when {
+            fix.isFromMockProvider -> repo.rejectedGps("Mock location ignored")
+            !fix.hasAccuracy() -> repo.rejectedGps("GPS accuracy unavailable")
+            fix.time > System.currentTimeMillis() + 10000L ->
+                repo.rejectedGps("Future GPS timestamp ignored")
+            System.currentTimeMillis() - fix.time > 30000L ->
+                repo.rejectedGps("Stale GPS fix ignored")
+            fix.accuracy > 35f -> repo.rejectedGps(
+                "GPS ±" + fix.accuracy.toInt() + "m · need ≤35m")
+            else -> gpsReadings.trySend(RoutePoint(
+                fix.latitude, fix.longitude, fix.time, fix.accuracy))
         }
     }
 
@@ -172,9 +190,10 @@ class TrackingService : Service(), SensorEventListener {
         gpsCallback = null
         repo.endWalk()
         repo.locationState.value = "Route saved · recording stopped"
-        ServiceCompat.startForeground(this, CoachNotifications.TRACK_ID,
+        if (listening) ServiceCompat.startForeground(this, CoachNotifications.TRACK_ID,
             CoachNotifications.persistent(this, repo.progress.value.steps, false),
             ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH)
+        else stopSelf()
     }
 
     private fun notifyProgress() {
@@ -194,6 +213,8 @@ class TrackingService : Service(), SensorEventListener {
         gpsCallback?.let { location.removeLocationUpdates(it) }
         readings.close(); gpsReadings.close(); scope.cancel()
         repo.sensorState.value = "Tracker stopped. Open app to restart."
+        if (repo.activeWalk() != null) repo.recorderState(
+            false, "GPS recorder stopped by Android · reopen Boali to resume")
         super.onDestroy()
     }
 
