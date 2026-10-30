@@ -28,6 +28,7 @@ import com.lynboa.walk.data.FitnessRepository
 import com.lynboa.walk.data.RoutePoint
 import com.lynboa.walk.domain.FitnessMath
 import com.lynboa.walk.maps.LynMap
+import com.lynboa.walk.maps.LynLocationPreview
 import com.lynboa.walk.maps.OfflineCityMap
 import java.text.NumberFormat
 import java.time.LocalDate
@@ -40,11 +41,15 @@ private val Glass = Color(0x663D293E)
 
 @Composable
 fun LynBoaScreen(repo: FitnessRepository, sensorAvailable: Boolean, hasPermission: Boolean,
+                 hasLocation: Boolean, onRequestLocation: () -> Unit,
                  onEnable: () -> Unit, onStartWalk: () -> Unit, onStopWalk: () -> Unit) {
     val progress by repo.progress.collectAsState()
     val walk by repo.walk.collectAsState()
     val route by repo.route.collectAsState()
     val sensorStatus by repo.sensorState.collectAsState()
+    val livePosition by repo.liveLocation.collectAsState()
+    val locationStatus by repo.locationState.collectAsState()
+    var recenterToken by remember { mutableIntStateOf(0) }
     val offlineStatus by repo.offlineStatus.collectAsState()
     val weight by repo.weightKg.collectAsState()
     val stride by repo.strideCm.collectAsState()
@@ -52,6 +57,7 @@ fun LynBoaScreen(repo: FitnessRepository, sensorAvailable: Boolean, hasPermissio
     var lyn by remember { mutableStateOf(false) }
     val accent = if (lyn) Lilac else Pink
     val context = LocalContext.current
+    val recording = walk != null && walk!!.endedAt == null
     val goal = repo.goal()
     val percent = (progress.steps.toFloat() / goal.coerceAtLeast(1)).coerceIn(0f, 1f)
 
@@ -83,10 +89,21 @@ fun LynBoaScreen(repo: FitnessRepository, sensorAvailable: Boolean, hasPermissio
 
                 CharacterHero(lyn, accent)
                 if (lyn) {
+                    LynLocationPreview(repo, hasLocation, recording)
+                    GlassCard(accent) {
+                        Text("LIVE POSITION", color = Lilac, fontWeight = FontWeight.Bold)
+                        Text(if (hasLocation) locationStatus else "Precise location permission required",
+                            color = Chalk, fontSize = 13.sp)
+                        Text(if (recording) "● Recording route · " + route.size + " GPS points"
+                            else "● Live preview · walk NOT recording", color = Lilac, fontSize = 11.sp)
+                        if (!hasLocation) Button(onClick = onRequestLocation,
+                            colors = ButtonDefaults.buttonColors(containerColor = Lilac,
+                                contentColor = Ink)) { Text("Allow precise location") }
+                    }
                     GlassCard(accent) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
-                                Text(if (walk?.endedAt == null && walk != null) "WALK IN PROGRESS"
+                                Text(if (recording) "WALK IN PROGRESS"
                                     else "YOUR LAST WALK", color = accent, fontSize = 11.sp,
                                     fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
                                 Text(String.format("%.2f km", (walk?.distanceMeters ?: 0.0) / 1000.0),
@@ -99,18 +116,24 @@ fun LynBoaScreen(repo: FitnessRepository, sensorAvailable: Boolean, hasPermissio
                                 else onStartWalk()
                             }, colors = ButtonDefaults.buttonColors(containerColor = Lilac,
                                 contentColor = Color(0xFF23102C))) {
-                                Text(if (walk != null && walk!!.endedAt == null) "End walk" else "Start walk")
+                                Text(if (recording) "End walk" else "Record walk")
                             }
                         }
                     }
                     Box(Modifier.padding(horizontal = 18.dp).fillMaxWidth().height(350.dp)
                         .clip(RoundedCornerShape(24.dp))
                         .border(1.dp, Lilac.copy(alpha = .6f), RoundedCornerShape(24.dp))) {
-                        LynMap(route, following = walk != null && walk!!.endedAt == null)
+                        LynMap(route, livePosition, following = recording, recenterToken = recenterToken)
                         Box(Modifier.align(Alignment.TopStart).padding(12.dp)
                             .background(Color(0xDD27172F), RoundedCornerShape(20.dp))
                             .padding(horizontal = 13.dp, vertical = 8.dp)) {
-                            Text("📍 Jalalpur Bhattian", color = Chalk, fontSize = 12.sp)
+                            Text(if (livePosition == null) "Jalalpur · default view"
+                                else "● YOUR LIVE POSITION", color = Chalk, fontSize = 12.sp)
+                        }
+                        TextButton(onClick = { recenterToken++ }, enabled = livePosition != null,
+                            modifier = Modifier.align(Alignment.BottomEnd).padding(8.dp)
+                                .background(Color(0xDD432855), RoundedCornerShape(14.dp))) {
+                            Text("⌖ Center on me", color = Chalk)
                         }
                         Box(Modifier.align(Alignment.BottomStart).padding(10.dp)
                             .background(Color(0xDD1D1425), RoundedCornerShape(12.dp))
@@ -118,6 +141,11 @@ fun LynBoaScreen(repo: FitnessRepository, sensorAvailable: Boolean, hasPermissio
                             Text("© OpenStreetMap contributors · OpenFreeMap", color = Chalk,
                                 fontSize = 9.sp)
                         }
+                    }
+                    GlassCard(accent) {
+                        Text("ROUTE GUIDE", color = Lilac, fontWeight = FontWeight.Bold)
+                        Text("The glowing dot shows your current position. Tap Record walk to save accepted GPS points and draw your purple route. Preview alone never records a walk.",
+                            color = Chalk, fontSize = 12.sp)
                     }
                     GlassCard(accent) {
                         Text("CITY MAP · OFFLINE", color = Lilac, fontWeight = FontWeight.Bold,
@@ -236,12 +264,14 @@ private fun TabPill(text: String, selected: Boolean, accent: Color,
 
 @Composable
 private fun CharacterHero(lyn: Boolean, accent: Color) {
-    Box(Modifier.fillMaxWidth().height(260.dp)) {
+    Box(Modifier.fillMaxWidth().padding(horizontal = 14.dp).height(282.dp)
+        .clip(RoundedCornerShape(26.dp))
+        .border(1.dp, accent.copy(alpha = .65f), RoundedCornerShape(26.dp))) {
         Image(painterResource(if (lyn) R.drawable.lyn else R.drawable.boa), null,
             Modifier.fillMaxSize(), contentScale = ContentScale.Crop,
             alignment = Alignment.TopCenter)
         Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(
-            Color.Transparent, Color(0x551C0D20), Ink))))
+            Color.White.copy(alpha = .10f), Color.Transparent, Color(0x991C0D20), Ink))))
         Column(Modifier.align(Alignment.BottomStart).padding(horizontal = 23.dp, vertical = 14.dp)) {
             Text(if (lyn) "LYN" else "BOA", color = Chalk, fontSize = 37.sp,
                 letterSpacing = 5.sp, fontWeight = FontWeight.Black)
@@ -257,7 +287,7 @@ private fun CharacterHero(lyn: Boolean, accent: Color) {
 private fun GlassCard(accent: Color, content: @Composable ColumnScope.() -> Unit) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp)
         .clip(RoundedCornerShape(23.dp))
-        .background(Brush.linearGradient(listOf(Color(0x885E465C), Glass, Color(0x444A2C43))))
+        .background(Brush.linearGradient(listOf(Color(0xAA765878), Glass, Color(0xBB2D1B30))))
         .border(1.dp, Brush.linearGradient(listOf(accent.copy(alpha = .72f),
             Color.White.copy(alpha = .11f), accent.copy(alpha = .19f))),
             RoundedCornerShape(23.dp))

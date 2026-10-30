@@ -3,10 +3,7 @@ package com.lynboa.walk.maps
 import android.content.Context
 import android.graphics.Color
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.*
 import androidx.compose.material3.Text
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
@@ -20,6 +17,7 @@ import org.maplibre.android.camera.CameraPosition
 import org.maplibre.android.camera.CameraUpdateFactory
 import org.maplibre.android.geometry.LatLng
 import org.maplibre.android.maps.MapView
+import org.maplibre.android.style.layers.CircleLayer
 import org.maplibre.android.style.layers.LineLayer
 import org.maplibre.android.style.layers.PropertyFactory
 import org.maplibre.android.style.sources.GeoJsonSource
@@ -34,17 +32,31 @@ private fun geoJson(points: List<RoutePoint>): String {
     val coords = JSONArray()
     points.forEach { coords.put(JSONArray().put(it.lon).put(it.lat)) }
     return JSONObject().put("type", "FeatureCollection")
-        .put("features", JSONArray().put(JSONObject()
+        .put("features", if (points.size < 2) JSONArray() else JSONArray().put(JSONObject()
             .put("type", "Feature")
             .put("properties", JSONObject())
             .put("geometry", JSONObject().put("type", "LineString")
                 .put("coordinates", coords)))).toString()
 }
 
+private fun pointGeoJson(point: RoutePoint?): String {
+    val features = JSONArray()
+    if (point != null) features.put(JSONObject().put("type", "Feature")
+        .put("properties", JSONObject())
+        .put("geometry", JSONObject().put("type", "Point")
+            .put("coordinates", JSONArray().put(point.lon).put(point.lat))))
+    return JSONObject().put("type", "FeatureCollection").put("features", features).toString()
+}
+
 @Composable
-fun LynMap(points: List<RoutePoint>, following: Boolean, modifier: Modifier = Modifier) {
+fun LynMap(points: List<RoutePoint>, live: RoutePoint?, following: Boolean,
+           recenterToken: Int, modifier: Modifier = Modifier) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
+    val latestLive by rememberUpdatedState(live)
+    val latestPoints by rememberUpdatedState(points)
+    var centeredOnce by remember { mutableStateOf(false) }
+    var lastRecenterToken by remember { mutableIntStateOf(0) }
     val mapViewResult = remember(context) {
         runCatching {
             MapRuntime.ensure(context)
@@ -52,19 +64,30 @@ fun LynMap(points: List<RoutePoint>, following: Boolean, modifier: Modifier = Mo
             view.onCreate(null)
             view.getMapAsync { map ->
                 map.setStyle(MapConfig.STYLE) { style ->
-                    style.addSource(GeoJsonSource("walk-route", geoJson(points)))
+                    style.addSource(GeoJsonSource("walk-route", geoJson(latestPoints)))
+                    style.addSource(GeoJsonSource("current-position", pointGeoJson(latestLive)))
                     style.addLayer(LineLayer("route-glow", "walk-route").withProperties(
                         PropertyFactory.lineColor(Color.rgb(183, 101, 250)),
                         PropertyFactory.lineWidth(13f), PropertyFactory.lineOpacity(0.35f)))
                     style.addLayer(LineLayer("route-line", "walk-route").withProperties(
                         PropertyFactory.lineColor(Color.rgb(246, 190, 255)),
                         PropertyFactory.lineWidth(5f)))
+                    style.addLayer(CircleLayer("position-halo", "current-position").withProperties(
+                        PropertyFactory.circleColor(Color.rgb(188, 121, 251)),
+                        PropertyFactory.circleRadius(23f),
+                        PropertyFactory.circleOpacity(.26f)))
+                    style.addLayer(CircleLayer("position-core", "current-position").withProperties(
+                        PropertyFactory.circleColor(Color.rgb(255, 249, 255)),
+                        PropertyFactory.circleStrokeColor(Color.rgb(106, 45, 187)),
+                        PropertyFactory.circleStrokeWidth(3f),
+                        PropertyFactory.circleRadius(8f)))
                 }
-                val last = points.lastOrNull()
+                val last = latestPoints.lastOrNull()
+                val current = latestLive
                 map.cameraPosition = CameraPosition.Builder()
-                    .target(LatLng(last?.lat ?: MapConfig.CITY_LAT,
-                                   last?.lon ?: MapConfig.CITY_LON))
-                    .zoom(if (last != null) 16.0 else 13.4).build()
+                    .target(LatLng(current?.lat ?: last?.lat ?: MapConfig.CITY_LAT,
+                                   current?.lon ?: last?.lon ?: MapConfig.CITY_LON))
+                    .zoom(if (current != null || last != null) 16.0 else 13.4).build()
             }
             }
         }
@@ -96,12 +119,14 @@ fun LynMap(points: List<RoutePoint>, following: Boolean, modifier: Modifier = Mo
             mapView.onPause(); mapView.onStop(); mapView.onDestroy()
         }
     }
-    LaunchedEffect(mapView, points, following) {
+    LaunchedEffect(mapView, points, live, following, recenterToken) {
         mapView.getMapAsync { map ->
-            (map.style?.getSourceAs<GeoJsonSource>("walk-route"))?.setGeoJson(geoJson(points))
-            if (following && points.isNotEmpty()) {
-                val p = points.last()
-                map.animateCamera(CameraUpdateFactory.newLatLng(LatLng(p.lat, p.lon)))
+            map.style?.getSourceAs<GeoJsonSource>("walk-route")?.setGeoJson(geoJson(points))
+            map.style?.getSourceAs<GeoJsonSource>("current-position")?.setGeoJson(pointGeoJson(live))
+            if (live != null && (!centeredOnce || following || recenterToken != lastRecenterToken)) {
+                map.animateCamera(CameraUpdateFactory.newLatLngZoom(LatLng(live.lat, live.lon), 16.5))
+                centeredOnce = true
+                lastRecenterToken = recenterToken
             }
         }
     }
