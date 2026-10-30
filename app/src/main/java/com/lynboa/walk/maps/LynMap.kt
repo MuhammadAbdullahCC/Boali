@@ -1,6 +1,8 @@
 package com.lynboa.walk.maps
 
 import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
+import android.util.Log
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -9,176 +11,184 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color as ComposeColor
+import androidx.compose.ui.graphics.Color as UiColor
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.lynboa.walk.data.RoutePoint
-import org.json.JSONArray
-import org.json.JSONObject
-import org.maplibre.android.camera.CameraPosition
-import org.maplibre.android.camera.CameraUpdateFactory
-import org.maplibre.android.geometry.LatLng
-import org.maplibre.android.geometry.LatLngBounds
-import org.maplibre.android.maps.MapLibreMap
-import org.maplibre.android.maps.MapView
-import org.maplibre.android.maps.Style
-import org.maplibre.android.style.layers.CircleLayer
-import org.maplibre.android.style.layers.LineLayer
-import org.maplibre.android.style.layers.PropertyFactory
-import org.maplibre.android.style.sources.GeoJsonSource
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import org.osmdroid.config.Configuration
+import org.osmdroid.tileprovider.tilesource.TileSourceFactory
+import org.osmdroid.util.BoundingBox
+import org.osmdroid.util.GeoPoint
+import org.osmdroid.views.MapView
+import org.osmdroid.views.overlay.Marker
+import org.osmdroid.views.overlay.Polyline
+import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
+import kotlin.math.*
 
-object MapConfig {
-    const val STYLE = "https://tiles.openfreemap.org/styles/liberty"
-    const val CITY_LAT = 32.06344
-    const val CITY_LON = 73.37776
-    // Raster street tiles avoid the blank vector basemap encountered on some Redmi devices.
-    // Interactive use only, NEVER prefetch OSM Standard tiles for offline storage.
-    const val STREET_STYLE_JSON = """{"version":8,"name":"Boali streets","sources":{"streets":{"type":"raster","tiles":["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],"tileSize":256,"attribution":"© OpenStreetMap contributors"}},"layers":[{"id":"street-tiles","type":"raster","source":"streets"}]}"""
-}
-
-private fun routeGeoJson(points: List<RoutePoint>): String {
-    val coordinates = JSONArray()
-    points.forEach { coordinates.put(JSONArray().put(it.lon).put(it.lat)) }
-    val features = JSONArray()
-    if (points.size >= 2) features.put(JSONObject().put("type", "Feature")
-        .put("properties", JSONObject())
-        .put("geometry", JSONObject().put("type", "LineString")
-            .put("coordinates", coordinates)))
-    return JSONObject().put("type", "FeatureCollection").put("features", features).toString()
-}
-
-private fun pointGeoJson(point: RoutePoint?): String {
-    val features = JSONArray()
-    if (point != null) features.put(JSONObject().put("type", "Feature")
-        .put("properties", JSONObject())
-        .put("geometry", JSONObject().put("type", "Point")
-            .put("coordinates", JSONArray().put(point.lon).put(point.lat))))
-    return JSONObject().put("type", "FeatureCollection").put("features", features).toString()
-}
-
-private fun fitRoute(map: MapLibreMap, points: List<RoutePoint>) {
-    when {
-        points.isEmpty() -> Unit
-        points.size == 1 -> map.animateCamera(CameraUpdateFactory.newLatLngZoom(
-            LatLng(points[0].lat, points[0].lon), 16.0))
-        else -> {
-            val builder = LatLngBounds.Builder()
-            points.forEach { builder.include(LatLng(it.lat, it.lon)) }
-            map.animateCamera(CameraUpdateFactory.newLatLngBounds(builder.build(), 58))
-        }
-    }
-}
-
-/** Map failure must never stop GPS tracking. Its sources come only from persisted routes. */
+/**
+ * Native Canvas map: entirely separate from MapLibre / OpenGL.
+ * GPS route storage is in SQLite and never depends on whether map tiles load.
+ */
 @Composable
 fun LynMap(points: List<RoutePoint>, live: RoutePoint?, following: Boolean,
            recenterToken: Int, modifier: Modifier = Modifier, vectorStyle: Boolean = false) {
-    val context = androidx.compose.ui.platform.LocalContext.current
+    if (vectorStyle) {
+        LegacyLynMap(points, live, following, recenterToken, modifier, true)
+        return
+    }
+    val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
-    val latestPoints by rememberUpdatedState(points)
-    val latestLive by rememberUpdatedState(live)
-    val latestFollowing by rememberUpdatedState(following)
-    var mapError by remember(vectorStyle) { mutableStateOf<String?>(null) }
-    var lastRecenterToken by remember { mutableIntStateOf(-1) }
+    var diagnostics by remember { mutableStateOf("Checking map connection…") }
+    var centerAt by remember { mutableLongStateOf(-1L) }
+    var centerToken by remember { mutableIntStateOf(-1) }
+    var displayedRoute by remember { mutableStateOf("") }
 
-    val mapResult = remember(context, vectorStyle) {
+    val mapResult = remember(context) {
         runCatching {
-            MapRuntime.ensure(context)
-            MapView(context).also { view ->
-                view.onCreate(null)
-                view.addOnDidFailLoadingMapListener { message ->
-                    mapError = message.take(140)
-                }
-                view.getMapAsync { map ->
-                    val loaded = Style.OnStyleLoaded { style ->
-                        mapError = null
-                        style.addSource(GeoJsonSource("walk-route", routeGeoJson(latestPoints)))
-                        style.addSource(GeoJsonSource("current-position", pointGeoJson(latestLive)))
-                        style.addLayer(LineLayer("route-glow", "walk-route").withProperties(
-                            PropertyFactory.lineColor(Color.rgb(123, 57, 186)),
-                            PropertyFactory.lineWidth(14f),
-                            PropertyFactory.lineOpacity(.50f)))
-                        style.addLayer(LineLayer("route-line", "walk-route").withProperties(
-                            PropertyFactory.lineColor(Color.rgb(246, 191, 255)),
-                            PropertyFactory.lineWidth(5.5f)))
-                        style.addLayer(CircleLayer("position-halo", "current-position").withProperties(
-                            PropertyFactory.circleColor(Color.rgb(177, 112, 246)),
-                            PropertyFactory.circleRadius(20f),
-                            PropertyFactory.circleOpacity(.32f)))
-                        style.addLayer(CircleLayer("position-core", "current-position").withProperties(
-                            PropertyFactory.circleColor(Color.WHITE),
-                            PropertyFactory.circleStrokeColor(Color.rgb(104, 43, 167)),
-                            PropertyFactory.circleStrokeWidth(3f),
-                            PropertyFactory.circleRadius(8f)))
-                        val initial = latestLive ?: latestPoints.lastOrNull()
-                        map.cameraPosition = CameraPosition.Builder()
-                            .target(LatLng(initial?.lat ?: MapConfig.CITY_LAT,
-                                           initial?.lon ?: MapConfig.CITY_LON))
-                            .zoom(if (initial != null) 16.0 else 13.4).build()
-                        if (!latestFollowing && latestPoints.size > 1) {
-                            view.post { fitRoute(map, latestPoints) }
-                        }
-                    }
-                    if (vectorStyle) map.setStyle(MapConfig.STYLE, loaded)
-                    else map.setStyle(Style.Builder().fromJson(MapConfig.STREET_STYLE_JSON), loaded)
-                }
+            val config = Configuration.getInstance()
+            config.userAgentValue = "Boali/0.7 (+https://github.com/MuhammadAbdullahCC/Boali)"
+            config.osmdroidBasePath = File(context.filesDir, "boali-map").apply { mkdirs() }
+            config.osmdroidTileCache = File(context.cacheDir, "boali-tiles").apply { mkdirs() }
+            config.tileDownloadThreads = 2.toShort()
+            MapView(context).apply {
+                setTileSource(TileSourceFactory.MAPNIK)
+                setMultiTouchControls(true)
+                minZoomLevel = 3.0
+                maxZoomLevel = 19.0
+                controller.setZoom(16.0)
+                val initial = live ?: points.lastOrNull()
+                controller.setCenter(GeoPoint(initial?.lat ?: MapConfig.CITY_LAT,
+                    initial?.lon ?: MapConfig.CITY_LON))
+                setBackgroundColor(Color.rgb(231, 219, 238))
             }
         }
     }
     if (mapResult.isFailure) {
-        Text("Map renderer unavailable. GPS walks continue recording: " +
-            (mapResult.exceptionOrNull()?.localizedMessage ?: "Unknown error"),
-            color = ComposeColor.White, modifier = modifier.fillMaxSize())
+        Text("Native map unavailable: " + (mapResult.exceptionOrNull()?.message ?: "error"),
+            color = UiColor.White, modifier = modifier.fillMaxSize())
         return
     }
-    val view = mapResult.getOrThrow()
+    val map = mapResult.getOrThrow()
+    val outer = remember(map) {
+        Polyline(map).apply {
+            outlinePaint.color = Color.rgb(87, 30, 129)
+            outlinePaint.strokeWidth = 15f
+            map.overlays.add(this)
+        }
+    }
+    val route = remember(map) {
+        Polyline(map).apply {
+            outlinePaint.color = Color.rgb(226, 139, 251)
+            outlinePaint.strokeWidth = 7f
+            map.overlays.add(this)
+        }
+    }
+    val position = remember(map) {
+        Marker(map).apply {
+            setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+            title = "Lyn · current GPS position"
+            icon = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(Color.WHITE)
+                setStroke(6, Color.rgb(116, 42, 173))
+                setSize(42, 42)
+            }
+            map.overlays.add(this)
+        }
+    }
 
-    DisposableEffect(view, lifecycle) {
+    LaunchedEffect(map) {
+        diagnostics = withContext(Dispatchers.IO) {
+            try {
+                val c = live ?: points.lastOrNull()
+                val lat = (c?.lat ?: MapConfig.CITY_LAT).coerceIn(-85.0, 85.0)
+                val lon = c?.lon ?: MapConfig.CITY_LON
+                val zoom = 15
+                val n = 1 shl zoom
+                val x = floor((lon + 180.0) / 360.0 * n).toInt().coerceIn(0, n - 1)
+                val y = floor((1.0 - asinh(tan(Math.toRadians(lat))) / PI) / 2.0 * n)
+                    .toInt().coerceIn(0, n - 1)
+                val request = URL("https://tile.openstreetmap.org/" +
+                    zoom + "/" + x + "/" + y + ".png").openConnection() as HttpURLConnection
+                try {
+                    request.setRequestProperty("User-Agent",
+                        "Boali/0.7 (+https://github.com/MuhammadAbdullahCC/Boali)")
+                    request.connectTimeout = 12000
+                    request.readTimeout = 12000
+                    request.useCaches = true
+                    val status = request.responseCode
+                    if (status == 200) {
+                        val magic = ByteArray(4)
+                        val count = request.inputStream.use { it.read(magic) }
+                        if (count == 4 && magic[0] == 0x89.toByte() &&
+                            magic[1] == 0x50.toByte()) "Tile server OK (PNG)"
+                        else "Server returned an unexpected tile image"
+                    } else "Tile server HTTP " + status
+                } finally { request.disconnect() }
+            } catch (e: Exception) {
+                "Tile error: " + e.javaClass.simpleName + " · " +
+                    (e.localizedMessage ?: "network problem").take(100)
+            }
+        }
+        Log.i("BoaliMap", diagnostics)
+    }
+
+    DisposableEffect(map, lifecycle) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
-                Lifecycle.Event.ON_START -> view.onStart()
-                Lifecycle.Event.ON_RESUME -> view.onResume()
-                Lifecycle.Event.ON_PAUSE -> view.onPause()
-                Lifecycle.Event.ON_STOP -> view.onStop()
+                Lifecycle.Event.ON_RESUME -> map.onResume()
+                Lifecycle.Event.ON_PAUSE -> map.onPause()
                 else -> Unit
             }
         }
         lifecycle.addObserver(observer)
-        if (lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) view.onStart()
-        if (lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) view.onResume()
+        if (lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) map.onResume()
         onDispose {
             lifecycle.removeObserver(observer)
-            view.onPause()
-            view.onStop()
-            view.onDestroy()
-        }
-    }
-
-    LaunchedEffect(view, points, live, following, recenterToken) {
-        view.getMapAsync { map ->
-            map.style?.getSourceAs<GeoJsonSource>("walk-route")?.setGeoJson(routeGeoJson(points))
-            map.style?.getSourceAs<GeoJsonSource>("current-position")?.setGeoJson(pointGeoJson(live))
-            if (!following && points.size >= 2) {
-                view.post { if (view.width > 0 && view.height > 0) fitRoute(map, points) }
-            } else if (live != null &&
-                (following || recenterToken != lastRecenterToken)) {
-                map.animateCamera(CameraUpdateFactory.newLatLngZoom(
-                    LatLng(live.lat, live.lon), 16.5))
-                lastRecenterToken = recenterToken
-            }
+            map.onPause()
+            map.onDetach()
         }
     }
 
     Box(modifier.fillMaxSize()) {
-        AndroidView(factory = { view }, modifier = Modifier.fillMaxSize())
-        if (mapError != null) {
-            Text("Street tiles failed: " + mapError + ". Switch map style or check data connection.",
-                color = ComposeColor.White,
-                modifier = Modifier.align(Alignment.TopCenter)
-                    .padding(10.dp).background(ComposeColor(0xDD3D1F41)).padding(8.dp))
-        }
+        AndroidView(factory = { map }, modifier = Modifier.fillMaxSize(), update = { view ->
+            val path = points.map { GeoPoint(it.lat, it.lon) }
+            outer.setPoints(path)
+            route.setPoints(path)
+            position.isEnabled = live != null
+            if (live != null) position.position = GeoPoint(live.lat, live.lon)
+
+            val key = (points.firstOrNull()?.at ?: 0L).toString() + ":" +
+                (points.lastOrNull()?.at ?: 0L) + ":" + points.size
+            if (!following && path.size >= 2 && displayedRoute != key) {
+                displayedRoute = key
+                view.post {
+                    if (view.width > 0 && view.height > 0) {
+                        val box = BoundingBox(path.maxOf { it.latitude },
+                            path.maxOf { it.longitude },
+                            path.minOf { it.latitude },
+                            path.minOf { it.longitude })
+                        view.zoomToBoundingBox(box, true, 65)
+                    }
+                }
+            } else if (live != null &&
+                (recenterToken != centerToken || following && live.at != centerAt)) {
+                view.controller.animateTo(GeoPoint(live.lat, live.lon))
+                centerAt = live.at
+                centerToken = recenterToken
+            }
+            view.invalidate()
+        })
+        Text(diagnostics, color = UiColor.White,
+            modifier = Modifier.align(Alignment.TopEnd).padding(8.dp)
+                .background(UiColor(0xDD39264B)).padding(6.dp))
     }
 }

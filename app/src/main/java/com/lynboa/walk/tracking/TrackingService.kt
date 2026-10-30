@@ -159,7 +159,12 @@ class TrackingService : Service(), SensorEventListener {
     private fun captureLocation(fix: Location) {
         if (fix.isFromMockProvider || !fix.hasAccuracy()) return
         if (fix.time > System.currentTimeMillis() + 10000L) return
-        gpsReadings.trySend(RoutePoint(fix.latitude, fix.longitude, fix.time, fix.accuracy))
+        if (fix.accuracy <= 35f) {
+            gpsReadings.trySend(RoutePoint(fix.latitude, fix.longitude, fix.time, fix.accuracy))
+        } else {
+            repo.locationState.value = "GPS accuracy ±" + fix.accuracy.toInt() +
+                " m, waiting for ≤35 m to record"
+        }
     }
 
     private fun stopWalk() {

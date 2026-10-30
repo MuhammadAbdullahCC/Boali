@@ -18,8 +18,8 @@ android {
         applicationId = "com.lynboa.walk"
         minSdk = 29
         targetSdk = 35
-        versionCode = 7
-        versionName = "0.6.1"
+        versionCode = 8
+        versionName = "0.7.0"
     }
     signingConfigs {
         getByName("debug") {
@@ -76,6 +76,7 @@ dependencies {
     implementation("androidx.work:work-runtime-ktx:2.10.5")
     implementation("com.google.android.gms:play-services-location:21.4.0")
     implementation("org.maplibre.gl:android-sdk-opengl:13.6.1")
+    implementation("org.osmdroid:osmdroid-android:6.1.20")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     testImplementation("junit:junit:4.13.2")
 }

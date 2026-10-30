@@ -28,8 +28,6 @@ fun LynLocationPreview(repo: FitnessRepository, permitted: Boolean, recording: B
         if (!permitted) {
             repo.locationState.value = "Grant precise location to show your position"
             onDispose { }
-        } else if (recording) {
-            onDispose { }
         } else {
             val manager = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
             val client = LocationServices.getFusedLocationProviderClient(context)
