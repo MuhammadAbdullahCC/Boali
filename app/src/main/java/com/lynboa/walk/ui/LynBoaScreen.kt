@@ -42,7 +42,8 @@ private val Glass = Color(0x663D293E)
 @Composable
 fun LynBoaScreen(repo: FitnessRepository, sensorAvailable: Boolean, hasPermission: Boolean,
                  hasLocation: Boolean, onRequestLocation: () -> Unit,
-                 onEnable: () -> Unit, onStartWalk: () -> Unit, onStopWalk: () -> Unit) {
+                 onEnable: () -> Unit, onStartWalk: () -> Unit, onStopWalk: () -> Unit,
+                 onOpenBatterySettings: () -> Unit) {
     val progress by repo.progress.collectAsState()
     val walk by repo.walk.collectAsState()
     val route by repo.route.collectAsState()
@@ -57,7 +58,10 @@ fun LynBoaScreen(repo: FitnessRepository, sensorAvailable: Boolean, hasPermissio
     var lyn by remember { mutableStateOf(false) }
     val accent = if (lyn) Lilac else Pink
     val context = LocalContext.current
+    val locationManager = remember(context) { context.getSystemService(android.content.Context.LOCATION_SERVICE) as android.location.LocationManager }
+    val gpsEnabled = locationManager.isLocationEnabled
     val recording = walk != null && walk!!.endedAt == null
+    val hasFix = livePosition != null && System.currentTimeMillis() - livePosition!!.timestamp < 45_000L
     val goal = repo.goal()
     val percent = (progress.steps.toFloat() / goal.coerceAtLeast(1)).coerceIn(0f, 1f)
 
@@ -92,10 +96,21 @@ fun LynBoaScreen(repo: FitnessRepository, sensorAvailable: Boolean, hasPermissio
                     LynLocationPreview(repo, hasLocation, recording)
                     GlassCard(accent) {
                         Text("LIVE POSITION", color = Lilac, fontWeight = FontWeight.Bold)
-                        Text(if (hasLocation) locationStatus else "Precise location permission required",
-                            color = Chalk, fontSize = 13.sp)
-                        Text(if (recording) "● Recording route · " + route.size + " GPS points"
-                            else "● Live preview · walk NOT recording", color = Lilac, fontSize = 11.sp)
+                        Text(when {
+                            !hasLocation -> "Location permission needed. Tap Allow precise location."
+                            !gpsEnabled -> "Location is OFF in Android settings."
+                            hasFix -> "GPS FIX · " + locationStatus
+                            else -> locationStatus
+                        }, color = Chalk, fontSize = 13.sp)
+                        Text(when {
+                            recording && hasFix -> "● RECORDING · ${route.size} accepted GPS points"
+                            recording -> "● RECORDING · waiting for accurate GPS"
+                            hasFix -> "● LIVE POSITION · route not recording"
+                            else -> "○ Waiting for live position · route not recording"
+                        }, color = Lilac, fontSize = 11.sp)
+                        if (hasFix) Text(
+                            "Position: ${String.format("%.5f", livePosition!!.lat)}, ${String.format("%.5f", livePosition!!.lon)} · ±${livePosition!!.accuracy.toInt()} m",
+                            color = Color.LightGray, fontSize = 11.sp)
                         if (!hasLocation) Button(onClick = onRequestLocation,
                             colors = ButtonDefaults.buttonColors(containerColor = Lilac,
                                 contentColor = Ink)) { Text("Allow precise location") }
@@ -127,8 +142,8 @@ fun LynBoaScreen(repo: FitnessRepository, sensorAvailable: Boolean, hasPermissio
                         Box(Modifier.align(Alignment.TopStart).padding(12.dp)
                             .background(Color(0xDD27172F), RoundedCornerShape(20.dp))
                             .padding(horizontal = 13.dp, vertical = 8.dp)) {
-                            Text(if (livePosition == null) "Jalalpur · default view"
-                                else "● YOUR LIVE POSITION", color = Chalk, fontSize = 12.sp)
+                            Text(if (hasFix) "● LIVE · ±${livePosition!!.accuracy.toInt()} m"
+                                else "Jalalpur · waiting for GPS", color = Chalk, fontSize = 12.sp)
                         }
                         TextButton(onClick = { recenterToken++ }, enabled = livePosition != null,
                             modifier = Modifier.align(Alignment.BottomEnd).padding(8.dp)
@@ -189,8 +204,10 @@ fun LynBoaScreen(repo: FitnessRepository, sensorAvailable: Boolean, hasPermissio
                         else if (!hasPermission) Button(onClick = onEnable,
                             colors = ButtonDefaults.buttonColors(containerColor = Pink,
                                 contentColor = Ink)) { Text("Enable real step tracking") }
-                        Text("● $sensorStatus", color = if (hasPermission) Pink else Color.LightGray,
-                            fontSize = 11.sp)
+                        Text("● ${if (hasPermission) sensorStatus else "Activity Recognition permission needed"}",
+                            color = if (hasPermission) Pink else Color.LightGray, fontSize = 11.sp)
+                        Text("Your steps come from the motion sensor, not GPS. Zero steps before walking is normal.",
+                            color = Color.LightGray, fontSize = 11.sp)
                     }
                     Row(Modifier.padding(horizontal = 18.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         MetricCard("🔥", "Estimated active kcal",
@@ -240,6 +257,15 @@ fun LynBoaScreen(repo: FitnessRepository, sensorAvailable: Boolean, hasPermissio
                         onMinus = { repo.setWeight(weight - 1) }, onPlus = { repo.setWeight(weight + 1) })
                     SettingRow("Stride", "$stride cm", accent,
                         onMinus = { repo.setStride(stride - 1) }, onPlus = { repo.setStride(stride + 1) })
+                }
+                GlassCard(accent) {
+                    Text("REDMI · HYPEROS SETUP", color = accent, fontWeight = FontWeight.Bold)
+                    Text("Allow Activity Recognition and precise location. In HyperOS, give Boali battery mode 'No restrictions', enable Background autostart if offered, and keep notifications enabled during walks.",
+                        color = Chalk, fontSize = 12.sp)
+                    OutlinedButton(onClick = onOpenBatterySettings,
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = accent)) {
+                        Text("Open Boali system settings")
+                    }
                 }
                 Text("Local GPS history · No account · Map tiles use network",
                     color = Color.White.copy(alpha = .5f), fontSize = 10.sp,

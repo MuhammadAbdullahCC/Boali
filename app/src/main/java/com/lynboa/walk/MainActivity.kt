@@ -2,6 +2,8 @@ package com.lynboa.walk
 
 import android.Manifest
 import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
 import android.content.Context
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -64,7 +66,8 @@ class MainActivity : ComponentActivity() {
             PermissionGate(repo,
                 startSteps = { startTracker(TrackingService.ACTION_START) },
                 startWalk = { startTracker(TrackingService.ACTION_START_WALK) },
-                stopWalk = { startTracker(TrackingService.ACTION_STOP_WALK) })
+                stopWalk = { startTracker(TrackingService.ACTION_STOP_WALK) },
+                openBatterySettings = { startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))) })
         }
     }
 
@@ -81,7 +84,8 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 private fun PermissionGate(repo: FitnessRepository, startSteps: () -> Unit,
-                           startWalk: () -> Unit, stopWalk: () -> Unit) {
+                           startWalk: () -> Unit, stopWalk: () -> Unit,
+                           openBatterySettings: () -> Unit) {
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val sensorAvailable = remember {
@@ -142,5 +146,6 @@ private fun PermissionGate(repo: FitnessRepository, startSteps: () -> Unit,
                     Manifest.permission.ACCESS_COARSE_LOCATION))
             }
         },
-        onStopWalk = stopWalk)
+        onStopWalk = stopWalk,
+        onOpenBatterySettings = openBatterySettings)
 }

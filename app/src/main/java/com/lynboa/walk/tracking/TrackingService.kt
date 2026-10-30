@@ -10,6 +10,7 @@ import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.location.Location
+import android.location.LocationManager
 import android.os.IBinder
 import android.os.SystemClock
 import androidx.core.app.ServiceCompat
@@ -119,7 +120,11 @@ class TrackingService : Service(), SensorEventListener {
 
     private fun startGps() {
         if (gpsCallback != null || !hasLocationPermission()) return
-        repo.locationState.value = "Searching for precise GPS…"
+        if (!(getSystemService(LOCATION_SERVICE) as LocationManager).isLocationEnabled) {
+            repo.locationState.value = "Location is OFF in Android settings. Enable it to record Lyn\u0027s route."
+            return
+        }
+        repo.locationState.value = "Location ON · waiting for accurate GPS fix…"
         try {
             ServiceCompat.startForeground(this, CoachNotifications.TRACK_ID,
                 CoachNotifications.persistent(this, repo.progress.value.steps, true),
