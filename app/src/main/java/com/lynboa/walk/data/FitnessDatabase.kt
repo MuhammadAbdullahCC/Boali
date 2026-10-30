@@ -12,10 +12,11 @@ data class DailyProgress(val date: String, val steps: Int = 0, val waterMl: Int 
                          val milestones: Int = 0)
 data class Walk(val id: Long, val startedAt: Long, val endedAt: Long?,
                 val distanceMeters: Double)
-data class RoutePoint(val lat: Double, val lon: Double, val at: Long, val accuracy: Float)
+data class RoutePoint(val lat: Double, val lon: Double, val at: Long, val accuracy: Float,
+                      val breakBefore: Boolean = false)
 
 /** SQLite with explicit schema versions and transactional sensor checkpoints. */
-class FitnessDatabase(context: Context) : SQLiteOpenHelper(context, "lynboa.db", null, 1) {
+class FitnessDatabase(context: Context) : SQLiteOpenHelper(context, "lynboa.db", null, 2) {
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("""CREATE TABLE daily (day TEXT PRIMARY KEY NOT NULL,
             steps INTEGER NOT NULL DEFAULT 0, water_ml INTEGER NOT NULL DEFAULT 0,
@@ -26,13 +27,17 @@ class FitnessDatabase(context: Context) : SQLiteOpenHelper(context, "lynboa.db",
             started_at INTEGER NOT NULL, ended_at INTEGER, distance_m REAL NOT NULL DEFAULT 0)""")
         db.execSQL("""CREATE TABLE points (id INTEGER PRIMARY KEY AUTOINCREMENT,
             walk_id INTEGER NOT NULL REFERENCES walks(id), lat REAL NOT NULL, lon REAL NOT NULL,
-            at INTEGER NOT NULL, accuracy REAL NOT NULL)""")
+            at INTEGER NOT NULL, accuracy REAL NOT NULL,
+            break_before INTEGER NOT NULL DEFAULT 0)""")
         db.execSQL("CREATE INDEX ix_points_walk ON points(walk_id, at)")
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        // Future schema versions get incremental ALTER TABLE migrations here.
-        error("Missing migration from $oldVersion to $newVersion; refusing to delete user history")
+        // In-place migration. Preserve every existing daily count and recorded track.
+        if (oldVersion <= 1 && newVersion >= 2) {
+            db.execSQL("ALTER TABLE points ADD COLUMN break_before INTEGER NOT NULL DEFAULT 0")
+        }
+        if (newVersion > 2) error("Missing migration to version $newVersion")
     }
 
     @Synchronized fun day(date: String): DailyProgress {
@@ -130,40 +135,67 @@ class FitnessDatabase(context: Context) : SQLiteOpenHelper(context, "lynboa.db",
 
     @Synchronized fun points(walkId: Long): List<RoutePoint> {
         val result = mutableListOf<RoutePoint>()
-        readableDatabase.rawQuery("SELECT lat,lon,at,accuracy FROM points WHERE walk_id=? ORDER BY at",
+        readableDatabase.rawQuery("SELECT lat,lon,at,accuracy,break_before FROM points WHERE walk_id=? ORDER BY at",
             arrayOf(walkId.toString())).use {
             while (it.moveToNext()) result.add(RoutePoint(it.getDouble(0), it.getDouble(1),
-                it.getLong(2), it.getFloat(3)))
+                it.getLong(2), it.getFloat(3), it.getInt(4) == 1))
         }
         return result
     }
 
-    /** Returns accepted route distance, or null when fix was rejected. */
+    /**
+     * Store GPS independently of the map. Long GPS outages start a new segment,
+     * so a stale point cannot poison every later fix or inflate walk distance.
+     * Returns null ONLY for a rejected fix. An accepted stationary point returns 0.
+     */
     @Synchronized fun addLocation(walkId: Long, point: RoutePoint): Double? {
-        if (point.accuracy <= 0f || point.accuracy > 35f ||
-            !point.lat.isFinite() || !point.lon.isFinite()) return null
+        if (point.accuracy <= 0f || point.accuracy > 45f ||
+            !point.lat.isFinite() || !point.lon.isFinite() ||
+            point.lat !in -90.0..90.0 || point.lon !in -180.0..180.0) return null
         val db = writableDatabase
         db.beginTransaction()
         try {
-            var last: RoutePoint? = null
-            db.rawQuery("SELECT lat,lon,at,accuracy FROM points WHERE walk_id=? ORDER BY at DESC LIMIT 1",
-                arrayOf(walkId.toString())).use {
-                if (it.moveToFirst()) last = RoutePoint(it.getDouble(0), it.getDouble(1),
-                    it.getLong(2), it.getFloat(3))
+            var previous: RoutePoint? = null
+            db.rawQuery(
+                "SELECT lat,lon,at,accuracy,break_before FROM points " +
+                "WHERE walk_id=? ORDER BY at DESC LIMIT 1", arrayOf(walkId.toString())
+            ).use { c ->
+                if (c.moveToFirst()) previous = RoutePoint(
+                    c.getDouble(0), c.getDouble(1), c.getLong(2), c.getFloat(3),
+                    c.getInt(4) == 1)
             }
-            val meters = last?.let {
-                FitnessMath.acceptedSegmentMeters(it.lat, it.lon, it.at, point.lat, point.lon,
-                    point.at, point.accuracy)
-            } ?: if (last == null) 0.0 else return null
+            var meters = 0.0
+            var newSegment = previous == null
+            previous?.let { earlier ->
+                val elapsed = point.at - earlier.at
+                if (elapsed <= 0L) return null
+                val distance = FitnessMath.haversineMeters(
+                    earlier.lat, earlier.lon, point.lat, point.lon)
+                val seconds = elapsed / 1000.0
+                // If GPS was unavailable for a while, resume on a new segment.
+                // This avoids teleport lines, and prevents permanent rejection.
+                newSegment = (elapsed > 45_000L && distance > 50.0) ||
+                    (elapsed > 120_000L)
+                if (!newSegment) {
+                    if (distance / seconds > 7.0) return null
+                    meters = if (distance >= 2.5) distance else 0.0
+                }
+            }
             val values = ContentValues().apply {
-                put("walk_id", walkId); put("lat", point.lat); put("lon", point.lon)
-                put("at", point.at); put("accuracy", point.accuracy)
+                put("walk_id", walkId)
+                put("lat", point.lat)
+                put("lon", point.lon)
+                put("at", point.at)
+                put("accuracy", point.accuracy)
+                put("break_before", if (newSegment) 1 else 0)
             }
             db.insertOrThrow("points", null, values)
             db.execSQL("UPDATE walks SET distance_m = distance_m + ? WHERE id=?",
                 arrayOf<Any>(meters, walkId))
             db.setTransactionSuccessful()
             return meters
-        } finally { db.endTransaction() }
+        } finally {
+            db.endTransaction()
+        }
     }
 }
