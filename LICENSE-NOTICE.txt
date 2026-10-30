@@ -1,0 +1,4 @@
+Project source code for private use. Character images supplied by the user.
+Map rendering uses MapLibre (BSD-2-Clause) and public OpenFreeMap styles.
+Map data © OpenStreetMap contributors (ODbL).
+All upstream dependency licenses continue to apply.
