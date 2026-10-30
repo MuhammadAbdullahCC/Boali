@@ -13,7 +13,13 @@ import org.maplibre.android.offline.OfflineTilePyramidRegionDefinition
 /** One modest city download. Map data © OpenStreetMap contributors. */
 object OfflineCityMap {
     fun download(context: Context, repository: FitnessRepository) {
-        val manager = OfflineManager.getInstance(context)
+        val manager = try {
+            MapRuntime.ensure(context)
+            OfflineManager.getInstance(context)
+        } catch (error: Throwable) {
+            repository.offlineStatus.value = "Map unavailable: ${error.message}"
+            return
+        }
         repository.offlineStatus.value = "Checking existing offline map…"
         manager.listOfflineRegions(object : OfflineManager.ListOfflineRegionsCallback {
             override fun onList(offlineRegions: Array<OfflineRegion>?) {

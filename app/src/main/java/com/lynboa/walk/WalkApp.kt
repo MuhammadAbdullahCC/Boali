@@ -1,30 +1,30 @@
 package com.lynboa.walk
 
 import android.app.Application
+import android.util.Log
 import com.lynboa.walk.data.FitnessRepository
 import com.lynboa.walk.notifications.CoachNotifications
 import com.lynboa.walk.notifications.HydrationWorker
-import org.maplibre.android.MapLibre
-import org.maplibre.android.module.http.HttpRequestUtil
-import okhttp3.OkHttpClient
-import java.util.concurrent.TimeUnit
 
 class WalkApp : Application() {
     val repository by lazy { FitnessRepository(this) }
-
     override fun onCreate() {
         super.onCreate()
-        // Named requests, 4 maximum parallel requests to the map host per provider policy.
-        val client = OkHttpClient.Builder()
-            .addInterceptor { chain ->
-                chain.proceed(chain.request().newBuilder()
-                    .header("User-Agent", "LynBoaWalk/0.1 (personal Android walking tracker)").build())
-            }
-            .dispatcher(okhttp3.Dispatcher().apply { maxRequestsPerHost = 4; maxRequests = 4 })
-            .connectTimeout(20, TimeUnit.SECONDS).build()
-        HttpRequestUtil.setOkHttpClient(client)
-        MapLibre.getInstance(this)
-        CoachNotifications.createChannels(this)
-        HydrationWorker.schedule(this)
+        // Record fatal exceptions locally so the next launch can show diagnostics.
+        val prior = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, error ->
+            try {
+                getSharedPreferences("lynboa_diagnostics", MODE_PRIVATE).edit()
+                    .putString("last_crash", "${java.time.Instant.now()}\n${error.stackTraceToString()}")
+                    .commit()
+            } catch (_: Throwable) { }
+            if (prior != null) prior.uncaughtException(thread, error)
+            else android.os.Process.killProcess(android.os.Process.myPid())
+        }
+        // Never load the map's native renderer as a prerequisite for step tracking.
+        runCatching { CoachNotifications.createChannels(this) }
+            .onFailure { Log.e("Boali", "Notification setup failed", it) }
+        runCatching { HydrationWorker.schedule(this) }
+            .onFailure { Log.e("Boali", "Water reminder scheduling failed", it) }
     }
 }

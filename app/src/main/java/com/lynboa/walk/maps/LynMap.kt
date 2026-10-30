@@ -7,6 +7,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
+import androidx.compose.material3.Text
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
@@ -44,8 +45,10 @@ private fun geoJson(points: List<RoutePoint>): String {
 fun LynMap(points: List<RoutePoint>, following: Boolean, modifier: Modifier = Modifier) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
-    val mapView = remember(context) {
-        MapView(context).also { view ->
+    val mapViewResult = remember(context) {
+        runCatching {
+            MapRuntime.ensure(context)
+            MapView(context).also { view ->
             view.onCreate(null)
             view.getMapAsync { map ->
                 map.setStyle(MapConfig.STYLE) { style ->
@@ -63,8 +66,16 @@ fun LynMap(points: List<RoutePoint>, following: Boolean, modifier: Modifier = Mo
                                    last?.lon ?: MapConfig.CITY_LON))
                     .zoom(if (last != null) 16.0 else 13.4).build()
             }
+            }
         }
     }
+    if (mapViewResult.isFailure) {
+        Text("Lyn's map cannot start on this device, but step tracking still works. " +
+            (mapViewResult.exceptionOrNull()?.message ?: "Map error"),
+            modifier = modifier.fillMaxSize(), color = androidx.compose.ui.graphics.Color.White)
+        return
+    }
+    val mapView = mapViewResult.getOrThrow()
 
     DisposableEffect(mapView, lifecycle) {
         val observer = LifecycleEventObserver { _, event ->
