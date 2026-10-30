@@ -93,7 +93,10 @@ class TrackingService : Service(), SensorEventListener {
             repo.activeWalk() != null)
         try {
             ServiceCompat.startForeground(this, CoachNotifications.TRACK_ID, notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH)
+                if (repo.activeWalk() != null && hasLocationPermission())
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH or
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+                else ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH)
         } catch (error: Exception) {
             repo.sensorState.value = "Tracking could not start: ${error.message}"
             stopSelf(); return

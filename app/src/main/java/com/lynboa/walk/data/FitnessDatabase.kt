@@ -113,6 +113,18 @@ class FitnessDatabase(context: Context) : SQLiteOpenHelper(context, "lynboa.db",
         }
     }
 
+    /** All sessions are retained by date, including sessions with no accepted GPS fixes. */
+    @Synchronized fun walkHistory(limit: Int = 365): List<Walk> {
+        val walks = mutableListOf<Walk>()
+        readableDatabase.rawQuery(
+            "SELECT id,started_at,ended_at,distance_m FROM walks ORDER BY started_at DESC LIMIT ?",
+            arrayOf(limit.coerceIn(1, 500).toString())
+        ).use { cursor ->
+            while (cursor.moveToNext()) walks.add(parseWalk(cursor))
+        }
+        return walks
+    }
+
     private fun parseWalk(c: android.database.Cursor) = Walk(
         c.getLong(0), c.getLong(1), if (c.isNull(2)) null else c.getLong(2), c.getDouble(3))
 

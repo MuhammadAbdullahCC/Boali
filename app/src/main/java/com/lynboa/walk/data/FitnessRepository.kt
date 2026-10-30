@@ -16,6 +16,9 @@ class FitnessRepository(context: Context) {
     val progress = MutableStateFlow(db.day(todayKey()))
     val walk = MutableStateFlow(db.newestWalk())
     val route = MutableStateFlow(walk.value?.let { db.points(it.id) } ?: emptyList())
+    val history = MutableStateFlow(db.walkHistory())
+    val reviewWalk = MutableStateFlow<Walk?>(null)
+    val reviewRoute = MutableStateFlow<List<RoutePoint>>(emptyList())
     val sensorState = MutableStateFlow("Not started")
     val liveLocation = MutableStateFlow<RoutePoint?>(null)
     val locationState = MutableStateFlow("Location permission not requested")
@@ -37,6 +40,17 @@ class FitnessRepository(context: Context) {
         progress.value = db.day(todayKey())
         walk.value = db.newestWalk()
         route.value = walk.value?.let { db.points(it.id) } ?: emptyList()
+        history.value = db.walkHistory()
+        reviewWalk.value?.let { reviewed ->
+            reviewWalk.value = history.value.firstOrNull { it.id == reviewed.id }
+            reviewRoute.value = reviewWalk.value?.let { db.points(it.id) } ?: emptyList()
+        }
+    }
+
+    /** Preview any saved session without modifying its route or ending the live walk. */
+    @Synchronized fun selectWalk(id: Long?) {
+        reviewWalk.value = if (id == null) null else history.value.firstOrNull { it.id == id }
+        reviewRoute.value = reviewWalk.value?.let { db.points(it.id) } ?: emptyList()
     }
 
     @Synchronized fun sensorReading(raw: Long, elapsedNanos: Long): SensorUpdate {

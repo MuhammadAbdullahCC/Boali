@@ -32,6 +32,9 @@ import com.lynboa.walk.maps.LynLocationPreview
 import com.lynboa.walk.maps.OfflineCityMap
 import java.text.NumberFormat
 import java.time.LocalDate
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 private val Pink = Color(0xFFF0A4CF)
 private val Lilac = Color(0xFFC9A1FF)
@@ -47,6 +50,13 @@ fun LynBoaScreen(repo: FitnessRepository, sensorAvailable: Boolean, hasPermissio
     val progress by repo.progress.collectAsState()
     val walk by repo.walk.collectAsState()
     val route by repo.route.collectAsState()
+    val history by repo.history.collectAsState()
+    val reviewedWalk by repo.reviewWalk.collectAsState()
+    val reviewedRoute by repo.reviewRoute.collectAsState()
+    val displayWalk = reviewedWalk ?: walk
+    val displayRoute = if (reviewedWalk != null) reviewedRoute else route
+    var allHistory by remember { mutableStateOf(false) }
+    var vectorMap by remember { mutableStateOf(false) }
     val sensorStatus by repo.sensorState.collectAsState()
     val livePosition by repo.liveLocation.collectAsState()
     val locationStatus by repo.locationState.collectAsState()
@@ -118,10 +128,11 @@ fun LynBoaScreen(repo: FitnessRepository, sensorAvailable: Boolean, hasPermissio
                     GlassCard(accent) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
-                                Text(if (recording) "WALK IN PROGRESS"
+                                Text(if (reviewedWalk != null) "SAVED WALK · REVIEW"
+                                    else if (recording) "WALK IN PROGRESS"
                                     else "YOUR LAST WALK", color = accent, fontSize = 11.sp,
                                     fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-                                Text(String.format("%.2f km", (walk?.distanceMeters ?: 0.0) / 1000.0),
+                                Text(String.format("%.2f km", (displayWalk?.distanceMeters ?: 0.0) / 1000.0),
                                     color = Chalk, fontSize = 30.sp, fontWeight = FontWeight.Bold)
                                 Text("GPS route distance · accepted fixes only", color = Color.LightGray,
                                     fontSize = 11.sp)
@@ -138,7 +149,9 @@ fun LynBoaScreen(repo: FitnessRepository, sensorAvailable: Boolean, hasPermissio
                     Box(Modifier.padding(horizontal = 18.dp).fillMaxWidth().height(350.dp)
                         .clip(RoundedCornerShape(24.dp))
                         .border(1.dp, Lilac.copy(alpha = .6f), RoundedCornerShape(24.dp))) {
-                        LynMap(route, livePosition, following = recording, recenterToken = recenterToken)
+                        LynMap(displayRoute, if (reviewedWalk == null) livePosition else null,
+                            following = recording && reviewedWalk == null,
+                            recenterToken = recenterToken, vectorStyle = vectorMap)
                         Box(Modifier.align(Alignment.TopStart).padding(12.dp)
                             .background(Color(0xDD27172F), RoundedCornerShape(20.dp))
                             .padding(horizontal = 13.dp, vertical = 8.dp)) {
@@ -153,8 +166,63 @@ fun LynBoaScreen(repo: FitnessRepository, sensorAvailable: Boolean, hasPermissio
                         Box(Modifier.align(Alignment.BottomStart).padding(10.dp)
                             .background(Color(0xDD1D1425), RoundedCornerShape(12.dp))
                             .padding(6.dp)) {
-                            Text("© OpenStreetMap contributors · OpenFreeMap", color = Chalk,
+                            Text(if (vectorMap) "© OpenStreetMap contributors · OpenFreeMap"
+                                else "© OpenStreetMap contributors · Standard street tiles", color = Chalk,
                                 fontSize = 9.sp)
+                        }
+                    }
+                    GlassCard(accent) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("MAP LAYER", color = Lilac, fontWeight = FontWeight.Bold,
+                                modifier = Modifier.weight(1f))
+                            OutlinedButton(onClick = { vectorMap = !vectorMap },
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Lilac)) {
+                                Text(if (vectorMap) "Use street map" else "Try vector map")
+                            }
+                        }
+                        Text("Street map uses regular online tiles. Vector mode uses OpenFreeMap and supports the separate offline-city download.",
+                            color = Color.LightGray, fontSize = 11.sp)
+                    }
+                    GlassCard(accent) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("WALK HISTORY", color = Lilac, fontWeight = FontWeight.Bold,
+                                modifier = Modifier.weight(1f))
+                            if (reviewedWalk != null) TextButton(onClick = {
+                                repo.selectWalk(null); recenterToken++
+                            }) { Text("Back to live", color = Lilac) }
+                        }
+                        Text("Each session is saved on your phone. Tap a date to see its purple route.",
+                            color = Color.LightGray, fontSize = 12.sp)
+                        if (history.isEmpty()) {
+                            Text("No walks saved yet. Record a walk, move outdoors, then End walk.",
+                                color = Chalk, fontSize = 12.sp)
+                        } else {
+                            val format = remember { SimpleDateFormat("EEE, dd MMM yyyy · h:mm a", Locale.getDefault()) }
+                            history.take(if (allHistory) 100 else 7).forEach { saved ->
+                                Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                                    .background(if (reviewedWalk?.id == saved.id)
+                                        Lilac.copy(alpha = .19f) else Color.White.copy(alpha = .06f))
+                                    .clickable {
+                                        repo.selectWalk(saved.id)
+                                        recenterToken++
+                                    }.padding(11.dp),
+                                    verticalAlignment = Alignment.CenterVertically) {
+                                    Column(Modifier.weight(1f)) {
+                                        Text(format.format(Date(saved.startedAt)),
+                                            color = Chalk, fontSize = 12.sp,
+                                            fontWeight = FontWeight.SemiBold)
+                                        Text(if (saved.endedAt == null) "Currently recording"
+                                            else "Completed session", color = Color.LightGray,
+                                            fontSize = 10.sp)
+                                    }
+                                    Text(String.format("%.2f km", saved.distanceMeters / 1000.0),
+                                        color = Lilac, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                            if (history.size > 7) TextButton(onClick = { allHistory = !allHistory }) {
+                                Text(if (allHistory) "Show recent" else "Show all saved walks",
+                                    color = Lilac)
+                            }
                         }
                     }
                     GlassCard(accent) {
