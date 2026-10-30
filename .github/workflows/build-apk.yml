@@ -81,15 +81,4 @@ jobs:
           api-level: 35
           target: google_apis
           arch: x86_64
-          script: |
-            set -e
-            adb install -r built-apk/app-debug.apk
-            adb logcat -c
-            adb shell am start -W -n com.lynboa.walk/.MainActivity
-            sleep 8
-            adb shell pidof com.lynboa.walk >/dev/null || { adb logcat -d -t 500; exit 1; }
-            if adb logcat -d -s AndroidRuntime:E | grep -A 20 'FATAL EXCEPTION'; then
-              echo 'Android launch crashed'
-              exit 1
-            fi
-            echo 'Passed cold-launch smoke test'
+          script: bash ci/smoke-test.sh
