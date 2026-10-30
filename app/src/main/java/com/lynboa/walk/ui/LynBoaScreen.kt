@@ -62,6 +62,7 @@ fun LynBoaScreen(repo: FitnessRepository, sensorAvailable: Boolean, hasPermissio
     val sensorStatus by repo.sensorState.collectAsState()
     val livePosition by repo.liveLocation.collectAsState()
     val locationStatus by repo.locationState.collectAsState()
+    val gpsRecorder by repo.gpsRecorder.collectAsState()
     var recenterToken by remember { mutableIntStateOf(0) }
     val offlineStatus by repo.offlineStatus.collectAsState()
     val weight by repo.weightKg.collectAsState()
@@ -131,11 +132,21 @@ fun LynBoaScreen(repo: FitnessRepository, sensorAvailable: Boolean, hasPermissio
                             else -> locationStatus
                         }, color = Chalk, fontSize = 13.sp)
                         Text(when {
-                            recording && hasFix -> "● RECORDING · ${route.size} accepted GPS points"
-                            recording -> "● RECORDING · waiting for accurate GPS"
-                            hasFix -> "● LIVE POSITION · route not recording"
-                            else -> "○ Waiting for live position · route not recording"
+                            recording && gpsRecorder.serviceActive ->
+                                "● RECORDER ACTIVE · " + route.size + " GPS points saved"
+                            recording -> "● WALK STARTED · GPS recorder inactive"
+                            hasFix -> "● LIVE PREVIEW · tap Record walk to save movement"
+                            else -> "○ Waiting for GPS · route not recording"
                         }, color = Lilac, fontSize = 11.sp)
+                        if (recording) {
+                            Text("GPS: " + gpsRecorder.received + " received · " +
+                                gpsRecorder.saved + " stored · " + gpsRecorder.skipped + " skipped",
+                                color = Chalk, fontSize = 12.sp)
+                            Text(gpsRecorder.reason, color = Color.LightGray, fontSize = 11.sp)
+                            if (route.size == 1) Text(
+                                "First GPS point saved. Walk at least 20–30 m for a visible trail.",
+                                color = Lilac, fontSize = 11.sp)
+                        }
                         if (hasFix) Text(
                             "Position: ${String.format("%.5f", livePosition!!.lat)}, ${String.format("%.5f", livePosition!!.lon)} · ±${livePosition!!.accuracy.toInt()} m",
                             color = Color.LightGray, fontSize = 11.sp)
@@ -198,7 +209,7 @@ fun LynBoaScreen(repo: FitnessRepository, sensorAvailable: Boolean, hasPermissio
                                 Text(if (vectorMap) "Use street map" else "Try vector map")
                             }
                         }
-                        Text("Street map uses regular online tiles. Vector mode uses OpenFreeMap and supports the separate offline-city download.",
+                        Text("The native map shows your live GPS track and keeps previously viewed streets cached. The legacy vector mode has a different offline-map store.",
                             color = Color.LightGray, fontSize = 11.sp)
                     }
                     GlassCard(accent) {
@@ -258,18 +269,18 @@ fun LynBoaScreen(repo: FitnessRepository, sensorAvailable: Boolean, hasPermissio
                     }
                     GlassCard(accent) {
                         Text("ROUTE GUIDE", color = Lilac, fontWeight = FontWeight.Bold)
-                        Text("The glowing dot shows your current position. Tap Record walk to save accepted GPS points and draw your purple route. Preview alone never records a walk.",
+                        Text("The dot displays GPS location. It cannot create a walking trail on its own. Tap Record walk, check the GPS received/stored counters, and walk outdoors. Your saved route can be reopened by date without internet.",
                             color = Chalk, fontSize = 12.sp)
                     }
                     GlassCard(accent) {
                         Text("CITY MAP · OFFLINE", color = Lilac, fontWeight = FontWeight.Bold,
                             fontSize = 13.sp)
                         Text(offlineStatus, color = Chalk, fontSize = 12.sp)
-                        Text("Save map tiles around your current GPS location (or Jalalpur by default) over Wi-Fi. Switch to vector mode to use the saved area offline.",
+                        Text("Downloaded OpenFreeMap data is only readable by the LEGACY vector renderer. GPS walking routes are stored locally, even without any downloaded map.",
                             fontSize = 12.sp, color = Color.LightGray)
                         OutlinedButton(onClick = { OfflineCityMap.download(context, repo, livePosition) },
                             colors = ButtonDefaults.outlinedButtonColors(contentColor = Lilac)) {
-                            Text("↓ Download map near me")
+                            Text("↓ Download legacy offline area")
                         }
                     }
                     GlassCard(accent) {
