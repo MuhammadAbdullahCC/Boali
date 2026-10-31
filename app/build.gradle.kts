@@ -15,11 +15,15 @@ android {
     compileSdk = 36
 
     defaultConfig {
+        // Supply GOOGLE_MAPS_ANDROID_API_KEY through CI secrets, never commit it.
+        manifestPlaceholders["googleMapsApiKey"] =
+            System.getenv("GOOGLE_MAPS_ANDROID_API_KEY")
+                ?.takeIf { it.isNotBlank() } ?: "BOALI_GOOGLE_MAPS_KEY_NOT_CONFIGURED"
         applicationId = "com.lynboa.walk"
         minSdk = 29
         targetSdk = 35
-        versionCode = 10
-        versionName = "0.9.0"
+        versionCode = 11
+        versionName = "1.0.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     signingConfigs {
@@ -76,6 +80,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.9.4")
     implementation("androidx.work:work-runtime-ktx:2.10.5")
     implementation("com.google.android.gms:play-services-location:21.4.0")
+    implementation("com.google.android.gms:play-services-maps:20.1.0")
     implementation("org.maplibre.gl:android-sdk-opengl:13.6.1")
     implementation("org.osmdroid:osmdroid-android:6.1.20")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")

@@ -30,6 +30,8 @@ import com.lynboa.walk.data.FitnessRepository
 import com.lynboa.walk.data.RoutePoint
 import com.lynboa.walk.domain.FitnessMath
 import com.lynboa.walk.maps.LynMap
+import com.lynboa.walk.maps.GoogleLynMap
+import com.lynboa.walk.maps.GoogleMapsSetup
 import com.lynboa.walk.maps.LynLocationPreview
 import com.lynboa.walk.maps.OfflineRasterMap
 import kotlinx.coroutines.launch
@@ -76,6 +78,8 @@ fun LynBoaScreen(repo: FitnessRepository, sensorAvailable: Boolean, hasPermissio
     var lyn by remember { mutableStateOf(false) }
     val accent = if (lyn) Lilac else Pink
     val context = LocalContext.current
+    val googleMapsReady = remember(context) { GoogleMapsSetup.isConfigured(context) }
+    var showGoogleMap by remember { mutableStateOf(googleMapsReady) }
     val scope = rememberCoroutineScope()
     val importOfflineMap = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
@@ -205,11 +209,19 @@ fun LynBoaScreen(repo: FitnessRepository, sensorAvailable: Boolean, hasPermissio
                     Box(Modifier.padding(horizontal = 18.dp).fillMaxWidth().height(350.dp)
                         .clip(RoundedCornerShape(24.dp))
                         .border(1.dp, Lilac.copy(alpha = .6f), RoundedCornerShape(24.dp))) {
-                        LynMap(displayRoute, if (reviewedWalk == null) livePosition else null,
-                            following = recording && reviewedWalk == null,
-                            recenterToken = recenterToken, vectorStyle = vectorMap,
-                            offlineArchive = if (useOfflineMap && !vectorMap)
-                                offlineArchive else null)
+                        if (showGoogleMap && googleMapsReady) {
+                            GoogleLynMap(displayRoute,
+                                if (reviewedWalk == null) livePosition else null,
+                                following = recording && reviewedWalk == null,
+                                recenterToken = recenterToken)
+                        } else {
+                            LynMap(displayRoute,
+                                if (reviewedWalk == null) livePosition else null,
+                                following = recording && reviewedWalk == null,
+                                recenterToken = recenterToken, vectorStyle = vectorMap,
+                                offlineArchive = if (useOfflineMap && !vectorMap)
+                                    offlineArchive else null)
+                        }
                         Box(Modifier.align(Alignment.TopStart).padding(12.dp)
                             .background(Color(0xDD27172F), RoundedCornerShape(20.dp))
                             .padding(horizontal = 13.dp, vertical = 8.dp)) {
@@ -230,10 +242,33 @@ fun LynBoaScreen(repo: FitnessRepository, sensorAvailable: Boolean, hasPermissio
                         }
                     }
                     GlassCard(accent) {
+                        Text("GOOGLE MAPS", color = Lilac, fontWeight = FontWeight.Bold)
+                        if (googleMapsReady) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("Display Google Maps with Boali's recorded GPS trail",
+                                    modifier = Modifier.weight(1f), color = Chalk,
+                                    fontSize = 12.sp)
+                                Switch(checked = showGoogleMap, onCheckedChange = {
+                                    showGoogleMap = it
+                                    if (it) {
+                                        useOfflineMap = false
+                                        vectorMap = false
+                                    }
+                                })
+                            }
+                        } else {
+                            Text("Google Maps is built into Boali, but it needs a Google Cloud Maps SDK for Android API key and billing enabled. Add the key as the GitHub Actions secret GOOGLE_MAPS_ANDROID_API_KEY and rebuild.",
+                                color = Chalk, fontSize = 12.sp)
+                            Text("Native street map remains active until Google Maps is configured.",
+                                color = Color.LightGray, fontSize = 11.sp)
+                        }
+                    }
+                    GlassCard(accent) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text("MAP LAYER", color = Lilac, fontWeight = FontWeight.Bold,
                                 modifier = Modifier.weight(1f))
                             OutlinedButton(onClick = {
+                                showGoogleMap = false
                                 vectorMap = !vectorMap
                                 if (vectorMap) useOfflineMap = false
                             },
@@ -324,7 +359,10 @@ fun LynBoaScreen(repo: FitnessRepository, sensorAvailable: Boolean, hasPermissio
                                 Switch(checked = useOfflineMap,
                                     onCheckedChange = { enabled ->
                                         useOfflineMap = enabled
-                                        if (enabled) vectorMap = false
+                                        if (enabled) {
+                                            showGoogleMap = false
+                                            vectorMap = false
+                                        }
                                     })
                             }
                         }
