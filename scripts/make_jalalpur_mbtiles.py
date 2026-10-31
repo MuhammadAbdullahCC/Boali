@@ -10,9 +10,9 @@ from io import BytesIO
 from pathlib import Path
 from PIL import Image,ImageDraw,ImageFont
 
-BBOX=(32.027,73.327,32.099,73.430) # south west north east: Jalalpur Bhattian
-CENTER=(32.06344,73.37776)
-OUTPUT=Path("dist/Boali-Jalalpur-Bhattian-Offline-Streets.mbtiles")
+BBOX=(32.030,73.535,32.105,73.640) # south west north east: western Hafizabad district
+CENTER=(32.067,73.587)
+OUTPUT=Path("dist/Boali-Hafizabad-West-Offline-Streets.mbtiles")
 HOSTS=[
   "https://overpass-api.de/api/interpreter",
   "https://overpass.kumi.systems/api/interpreter",
@@ -171,7 +171,7 @@ def main():
     PRIMARY KEY(zoom_level,tile_column,tile_row));""")
     s,w,n,e=BBOX
     meta={
-        "name":"Jalalpur Bhattian · Boali Offline Streets",
+        "name":"Hafizabad West · Boali Offline Streets",
         "type":"baselayer","version":"1.0.0","format":"png",
         "description":"Real OpenStreetMap roads, buildings and places, locally rendered for offline walking",
         "attribution":"© OpenStreetMap contributors, ODbL 1.0",
