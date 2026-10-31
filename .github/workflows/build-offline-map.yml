@@ -25,7 +25,7 @@ jobs:
         run: |
           python - <<'PY'
           import sqlite3, pathlib
-          p=pathlib.Path('dist/Boali-Hafizabad-West-Bhattian-Offline-Streets.mbtiles')
+          p=pathlib.Path('dist/Boali-Hafizabad-West-Offline-Streets.mbtiles')
           db=sqlite3.connect(p)
           assert db.execute('PRAGMA integrity_check').fetchone()[0]=='ok'
           assert db.execute("select value from metadata where name='format'").fetchone()[0]=='png'
@@ -37,12 +37,12 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: Boali-Hafizabad-West-Offline-Streets-MBTiles
-          path: dist/Boali-Hafizabad-West-Bhattian-Offline-Streets.mbtiles
+          path: dist/Boali-Hafizabad-West-Offline-Streets.mbtiles
           if-no-files-found: error
           retention-days: 30
       - name: Publish direct-download file as public GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view offline-hafizabad-west-v1 || gh release create offline-hafizabad-west-v1 --title 'Boali Hafizabad-West offline street map' --notes 'Raster MBTiles of actual OpenStreetMap roads around Hafizabad-West Bhattian. For import into Boali Offline Map. Data © OpenStreetMap contributors, ODbL.' --target "${GITHUB_SHA}" --latest=false
-          gh release upload offline-hafizabad-west-v1 dist/Boali-Hafizabad-West-Bhattian-Offline-Streets.mbtiles --clobber
+          gh release view offline-hafizabad-west-v1 || gh release create offline-hafizabad-west-v1 --title 'Boali Hafizabad-West offline street map' --notes 'Raster MBTiles of actual OpenStreetMap roads around Hafizabad district. For import into Boali Offline Map. Data © OpenStreetMap contributors, ODbL.' --target "${GITHUB_SHA}" --latest=false
+          gh release upload offline-hafizabad-west-v1 dist/Boali-Hafizabad-West-Offline-Streets.mbtiles --clobber
