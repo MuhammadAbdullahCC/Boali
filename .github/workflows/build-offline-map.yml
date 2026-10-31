@@ -1,0 +1,48 @@
+name: Create Jalalpur offline raster MBTiles
+on:
+  push:
+    paths:
+      - scripts/make_jalalpur_mbtiles.py
+      - .github/workflows/build-offline-map.yml
+  workflow_dispatch:
+
+jobs:
+  map:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install raster renderer
+        run: python -m pip install Pillow==12.0.0
+      - name: Fetch genuine OSM data and render offline street tiles
+        run: python scripts/make_jalalpur_mbtiles.py
+      - name: Verify imported MBTiles schema and actual raster tiles
+        run: |
+          python - <<'PY'
+          import sqlite3, pathlib
+          p=pathlib.Path('dist/Boali-Jalalpur-Bhattian-Offline-Streets.mbtiles')
+          db=sqlite3.connect(p)
+          assert db.execute('PRAGMA integrity_check').fetchone()[0]=='ok'
+          assert db.execute("select value from metadata where name='format'").fetchone()[0]=='png'
+          c=db.execute('select count(*) from tiles').fetchone()[0]
+          png=db.execute('select tile_data from tiles limit 1').fetchone()[0]
+          assert c>1000 and png[:8]==b'\x89PNG\r\n\x1a\n'
+          print('Verified:',c,'real PNG map tiles,',p.stat().st_size,'bytes')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Boali-Jalalpur-Offline-Streets-MBTiles
+          path: dist/Boali-Jalalpur-Bhattian-Offline-Streets.mbtiles
+          if-no-files-found: error
+          retention-days: 30
+      - name: Publish direct-download file as public GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view offline-jalalpur-v1 || gh release create offline-jalalpur-v1 --title 'Boali Jalalpur offline street map' --notes 'Raster MBTiles of actual OpenStreetMap roads around Jalalpur Bhattian. For import into Boali Offline Map. Data © OpenStreetMap contributors, ODbL.' --target "${GITHUB_SHA}" --latest=false
+          gh release upload offline-jalalpur-v1 dist/Boali-Jalalpur-Bhattian-Offline-Streets.mbtiles --clobber
