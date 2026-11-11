@@ -45,6 +45,7 @@ import java.util.Locale
 
 private val Pink = Color(0xFFF0A4CF)
 private val Lilac = Color(0xFFC9A1FF)
+private val HanaGold = Color(0xFFFFCA85)
 private val Ink = Color(0xFF160E1A)
 private val Chalk = Color(0xFFFFF1F7)
 private val Glass = Color(0x663D293E)
@@ -53,7 +54,7 @@ private val Glass = Color(0x663D293E)
 fun LynBoaScreen(repo: FitnessRepository, sensorAvailable: Boolean, hasPermission: Boolean,
                  hasLocation: Boolean, onRequestLocation: () -> Unit,
                  onEnable: () -> Unit, onStartWalk: () -> Unit, onStopWalk: () -> Unit,
-                 onOpenBatterySettings: () -> Unit) {
+                 onOpenBatterySettings: () -> Unit, openHana: Boolean = false) {
     val progress by repo.progress.collectAsState()
     val walk by repo.walk.collectAsState()
     val route by repo.route.collectAsState()
@@ -76,7 +77,8 @@ fun LynBoaScreen(repo: FitnessRepository, sensorAvailable: Boolean, hasPermissio
     val stride by repo.strideCm.collectAsState()
     val reminders by repo.waterReminders.collectAsState()
     var lyn by remember { mutableStateOf(false) }
-    val accent = if (lyn) Lilac else Pink
+    var hana by remember { mutableStateOf(openHana) }
+    val accent = if (hana) HanaGold else if (lyn) Lilac else Pink
     val context = LocalContext.current
     val googleMapsReady = remember(context) { GoogleMapsSetup.isConfigured(context) }
     var showGoogleMap by remember { mutableStateOf(googleMapsReady) }
@@ -127,7 +129,8 @@ fun LynBoaScreen(repo: FitnessRepository, sensorAvailable: Boolean, hasPermissio
 
     MaterialTheme(colorScheme = darkColorScheme(primary = accent, surface = Ink)) {
         Box(Modifier.fillMaxSize().background(Brush.verticalGradient(
-            if (lyn) listOf(Color(0xFF190D2F), Ink, Color(0xFF0B0712))
+            if (hana) listOf(Color(0xFF34291E), Ink, Color(0xFF120E0D))
+            else if (lyn) listOf(Color(0xFF190D2F), Ink, Color(0xFF0B0712))
             else listOf(Color(0xFF391B32), Ink, Color(0xFF150A15))))) {
             Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())
                 .statusBarsPadding().navigationBarsPadding().padding(bottom = 18.dp),
@@ -136,7 +139,7 @@ fun LynBoaScreen(repo: FitnessRepository, sensorAvailable: Boolean, hasPermissio
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically) {
                     Column {
-                        Text("LYN  ×  BOA", color = Chalk, fontSize = 19.sp,
+                        Text("BOA  ×  LYN  ×  HANA", color = Chalk, fontSize = 19.sp,
                             fontWeight = FontWeight.ExtraBold, letterSpacing = 3.sp)
                         Text("Your footsteps. Their judgment.", color = Color.LightGray, fontSize = 11.sp)
                     }
@@ -146,13 +149,17 @@ fun LynBoaScreen(repo: FitnessRepository, sensorAvailable: Boolean, hasPermissio
                 Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp)
                     .background(Color.White.copy(alpha = .07f), RoundedCornerShape(24.dp))
                     .padding(5.dp)) {
-                    TabPill("BOA · STEPS", !lyn, Pink, Modifier.weight(1f)) { lyn = false }
-                    Spacer(Modifier.width(6.dp))
-                    TabPill("LYN · ROUTE", lyn, Lilac, Modifier.weight(1f)) { lyn = true }
+                    TabPill("BOA · STEPS", !lyn && !hana, Pink, Modifier.weight(1f)) { lyn = false; hana = false }
+                    Spacer(Modifier.width(4.dp))
+                    TabPill("LYN · ROUTE", lyn, Lilac, Modifier.weight(1f)) { lyn = true; hana = false }
+                    Spacer(Modifier.width(4.dp))
+                    TabPill("HANA · REPORT", hana, HanaGold, Modifier.weight(1f)) { lyn = false; hana = true }
                 }
 
-                CharacterHero(lyn, accent)
-                if (lyn) {
+                if (!hana) CharacterHero(lyn, accent)
+                if (hana) {
+                    HanaScreen(repo)
+                } else if (lyn) {
                     LynLocationPreview(repo, hasLocation, recording)
                     GlassCard(accent) {
                         Text("LIVE POSITION", color = Lilac, fontWeight = FontWeight.Bold)
@@ -446,6 +453,7 @@ fun LynBoaScreen(repo: FitnessRepository, sensorAvailable: Boolean, hasPermissio
                         }, color = Chalk)
                     }
                 }
+                if (!hana) {
                 GlassCard(accent) {
                     Text("CALIBRATION", color = accent, fontWeight = FontWeight.Bold)
                     Text("Steps come from the phone sensor. Calories are estimates based on your settings.",
@@ -467,6 +475,7 @@ fun LynBoaScreen(repo: FitnessRepository, sensorAvailable: Boolean, hasPermissio
                 Text("Local GPS history · No account · Map tiles use network",
                     color = Color.White.copy(alpha = .5f), fontSize = 10.sp,
                     modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
+                }
             }
         }
     }
