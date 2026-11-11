@@ -21,6 +21,7 @@ import com.lynboa.walk.R
 import com.lynboa.walk.WalkApp
 import java.time.Duration
 import java.time.LocalDate
+import java.time.ZoneId
 import java.time.ZonedDateTime
 import java.util.concurrent.TimeUnit
 
@@ -34,7 +35,7 @@ class HanaReminderWorker(context: Context, params: WorkerParameters) :
     override suspend fun doWork(): Result {
         val context = applicationContext
         if (!HanaReport.enabled(context)) return Result.success()
-        val today = LocalDate.now()
+        val today = HanaReport.today()
         if (HanaReport.recordedDate(context) == today.toString()) return Result.success()
 
         val repo = (context as WalkApp).repository
@@ -80,7 +81,7 @@ class HanaReminderWorker(context: Context, params: WorkerParameters) :
                 manager.cancelUniqueWork(WORK_NAME)
                 return
             }
-            val now = ZonedDateTime.now()
+            val now = ZonedDateTime.now(ZoneId.of("Asia/Karachi"))
             var next = now.withHour(20).withMinute(0).withSecond(0).withNano(0)
             if (!next.isAfter(now)) next = next.plusDays(1)
             val delay = Duration.between(now, next).toMillis().coerceAtLeast(0L)
