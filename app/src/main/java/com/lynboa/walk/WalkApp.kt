@@ -5,6 +5,7 @@ import android.util.Log
 import com.lynboa.walk.data.FitnessRepository
 import com.lynboa.walk.notifications.CoachNotifications
 import com.lynboa.walk.notifications.HydrationWorker
+import com.lynboa.walk.reporting.HanaReminderWorker
 
 class WalkApp : Application() {
     val repository by lazy { FitnessRepository(this) }
@@ -26,5 +27,7 @@ class WalkApp : Application() {
             .onFailure { Log.e("Boali", "Notification setup failed", it) }
         runCatching { HydrationWorker.schedule(this) }
             .onFailure { Log.e("Boali", "Water reminder scheduling failed", it) }
+        runCatching { HanaReminderWorker.schedule(this) }
+            .onFailure { Log.e("Boali", "Hana report scheduling failed", it) }
     }
 }
