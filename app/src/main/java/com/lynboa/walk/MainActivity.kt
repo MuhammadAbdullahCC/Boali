@@ -64,6 +64,7 @@ class MainActivity : ComponentActivity() {
                 )
             }
             PermissionGate(repo,
+                openHana = intent?.getBooleanExtra("open_hana", false) == true,
                 startSteps = { startTracker(TrackingService.ACTION_START) },
                 startWalk = { startTracker(TrackingService.ACTION_START_WALK) },
                 stopWalk = { startTracker(TrackingService.ACTION_STOP_WALK) },
@@ -83,7 +84,7 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun PermissionGate(repo: FitnessRepository, startSteps: () -> Unit,
+private fun PermissionGate(repo: FitnessRepository, openHana: Boolean, startSteps: () -> Unit,
                            startWalk: () -> Unit, stopWalk: () -> Unit,
                            openBatterySettings: () -> Unit) {
     val context = LocalContext.current
@@ -147,5 +148,6 @@ private fun PermissionGate(repo: FitnessRepository, startSteps: () -> Unit,
             }
         },
         onStopWalk = stopWalk,
-        onOpenBatterySettings = openBatterySettings)
+        onOpenBatterySettings = openBatterySettings,
+        openHana = openHana)
 }
