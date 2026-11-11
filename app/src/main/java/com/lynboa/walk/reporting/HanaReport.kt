@@ -6,6 +6,7 @@ import android.net.Uri
 import com.lynboa.walk.data.FitnessRepository
 import com.lynboa.walk.domain.FitnessMath
 import java.time.LocalDate
+import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 
@@ -15,14 +16,15 @@ import java.util.Locale
  */
 object HanaReport {
     private const val PREF_NAME = "boali_hana_reporting"
+    fun today(): LocalDate = LocalDate.now(ZoneId.of("Asia/Karachi"))
     private fun prefs(context: Context) =
         context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
 
-    fun entry(context: Context, key: String, day: LocalDate = LocalDate.now()): String =
+    fun entry(context: Context, key: String, day: LocalDate = today()): String =
         prefs(context).getString(day.toString() + ":" + key, "").orEmpty()
 
     fun saveEntry(context: Context, key: String, value: String) {
-        prefs(context).edit().putString(LocalDate.now().toString() + ":" + key, value.take(500)).apply()
+        prefs(context).edit().putString(today().toString() + ":" + key, value.take(500)).apply()
     }
 
     fun recipientNumber(context: Context): String =
@@ -61,7 +63,7 @@ object HanaReport {
             .apply()
     }
 
-    fun compose(context: Context, repo: FitnessRepository, day: LocalDate = LocalDate.now()): String {
+    fun compose(context: Context, repo: FitnessRepository, day: LocalDate = today()): String {
         val progress = repo.progress.value
         val dateText = day.format(DateTimeFormatter.ofPattern("d MMM yyyy", Locale.ENGLISH))
         fun log(key: String) = entry(context, key, day).ifBlank { "Not logged" }
@@ -81,7 +83,7 @@ object HanaReport {
             "💧 Water logged: " + progress.waterMl + " ml",
             "📝 Notes: " + log("notes"),
             "",
-            "Automatically prepared by BoaLi at the daily 8 PM report window.",
+            "Automatically prepared by BoaLi. Daily report window: 8 PM Pakistan time.",
             "These entries are user-reported; distance is estimated from steps."
         ).joinToString("\n")
     }
